@@ -63,6 +63,18 @@ class AppRouter:
 
     async def view_pop(self, e: ft.ViewPopEvent):
         """Fires when the user clicks the Android back button or Appbar back arrow."""
+        # Ensure we always exit fullscreen mode when backing out of the Media Viewer
+        if hasattr(self.page, 'window_full_screen'):
+            self.page.window_full_screen = False
+        elif hasattr(self.page, 'window'):
+            self.page.window.full_screen = False
+            
         self.page.views.pop()
         top_view = self.page.views[-1]
+        
+        if top_view.route == "/home":
+            audio_state = self.page.session.store.get("audio_state")
+            if audio_state:
+                self.page.run_task(audio_state.stop_audio)
+                    
         await self.page.push_route(top_view.route)

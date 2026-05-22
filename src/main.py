@@ -40,6 +40,21 @@ async def main(page: ft.Page):
     page.theme = ft.Theme(color_scheme_seed=saved_theme)
 
     app_router = AppRouter(page)
+    
+    # --- GLOBAL AUDIO ENGINE INJECTION ---
+    try:
+        import flet_video as fv
+    except ImportError:
+        try:
+            import flet.video as fv
+        except ImportError:
+            fv = None
+
+    if fv:
+        global_audio_engine = fv.Video(width=50, height=50, opacity=0.01, autoplay=True, visible=True)
+        page.overlay.append(global_audio_engine)
+        from services.audio_service import GlobalAudioState
+        page.session.store.set("audio_state", GlobalAudioState(page, global_audio_engine))
 
     page.on_route_change = app_router.route_change
     page.on_view_pop = app_router.view_pop

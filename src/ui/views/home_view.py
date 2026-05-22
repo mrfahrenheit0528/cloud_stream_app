@@ -127,7 +127,7 @@ def home_view(page: ft.Page) -> ft.View:
 
 
     # Card Factory Component
-    def build_media_card(item_data):
+    def build_media_card(item_data, parent_list=None):
         """Constructs an individual asset poster card with anti-aliasing constraints."""
         
         is_audio = item_data.get("is_audio", False)
@@ -161,6 +161,20 @@ def home_view(page: ft.Page) -> ft.View:
             if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
                 # Second click -> Play the media!
                 page.session.store.set("current_media", data)
+                if parent_list:
+                    page.session.store.set("current_gallery", parent_list)
+                    
+                if data.get("is_audio"):
+                    audio_state = page.session.store.get("audio_state")
+                    if audio_state and parent_list:
+                        audio_queue = [f for f in parent_list if f.get("is_audio")]
+                        idx = 0
+                        for i, f in enumerate(audio_queue):
+                            if f['id'] == data['id']:
+                                idx = i
+                                break
+                        audio_state.set_queue(audio_queue, idx)
+                        
                 asyncio.create_task(page.push_route(f"/viewer/{data['name']}"))
             else:
                 # First click -> Update Hero Banner
@@ -219,6 +233,28 @@ def home_view(page: ft.Page) -> ft.View:
             e.control.content.scale = 1.05 if e.data == "true" else 1.0
             e.control.content.update()
 
+        card_stack = ft.Stack([
+            visual_content,
+            # Subtle dark text overlay at the bottom of the card for filenames
+            ft.Container(
+                alignment=ft.Alignment(-1.0, 1.0),
+                padding=12,
+                gradient=ft.LinearGradient(
+                    begin=ft.Alignment(0.0, -0.5),
+                    end=ft.Alignment(0.0, 1.0),
+                    colors=["#00000000", "#D9000000"]
+                ),
+                content=ft.Text(
+                    item_data["name"],
+                    size=12,
+                    max_lines=3, # Allow up to 3 lines for long filenames
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    color="white",
+                    weight=ft.FontWeight.W_600
+                )
+            )
+        ])
+        
         return ft.GestureDetector(
             on_tap=on_card_tap, 
             on_hover=on_card_hover,
@@ -231,27 +267,7 @@ def home_view(page: ft.Page) -> ft.View:
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 scale=1.0,
                 animate_scale=ft.Animation(300, ft.AnimationCurve.EASE_OUT_CUBIC),
-                content=ft.Stack([
-                    visual_content,
-                    # Subtle dark text overlay at the bottom of the card for filenames
-                    ft.Container(
-                        alignment=ft.Alignment(-1.0, 1.0),
-                        padding=12,
-                        gradient=ft.LinearGradient(
-                            begin=ft.Alignment(0.0, -0.5),
-                            end=ft.Alignment(0.0, 1.0),
-                            colors=["#00000000", "#D9000000"]
-                        ),
-                        content=ft.Text(
-                            item_data["name"],
-                            size=12,
-                            max_lines=3, # Allow up to 3 lines for long filenames
-                            overflow=ft.TextOverflow.ELLIPSIS,
-                            color="white",
-                            weight=ft.FontWeight.W_600
-                        )
-                    )
-                ])
+                content=card_stack
             )
         )
 
@@ -269,7 +285,7 @@ def home_view(page: ft.Page) -> ft.View:
                 ft.Row(
                     scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
                     spacing=12,
-                    controls=[build_media_card(item) for item in items_list]
+                    controls=[build_media_card(item, items_list) for item in items_list]
                 )
             ],
             spacing=8
