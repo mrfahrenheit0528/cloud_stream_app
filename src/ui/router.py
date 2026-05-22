@@ -1,4 +1,5 @@
 import flet as ft
+import os
 
 # Import the extracted view functions from your views directory
 from .views.login_view import login_view
@@ -11,11 +12,36 @@ class AppRouter:
     def __init__(self, page: ft.Page):
         self.page = page
 
-    def route_change(self, e: ft.RouteChangeEvent):
-        """Fires whenever page.go() is called."""
+    async def route_change(self, e: ft.RouteChangeEvent):
+        """Fires whenever push_route() is called. Must be async to use await push_route()."""
         self.page.views.clear()
 
-        # 1. Base Layer Logging Logic
+        # 1. Fast-path Token Bypass for FLET_APP Native Desktop Mode
+        token_cache_path = os.path.join(os.getcwd(), ".token.json")
+        if not self.page.session.store.contains_key("drive_access_token"):
+            if os.path.exists(token_cache_path):
+                import json
+                try:
+                    with open(token_cache_path, "r") as f:
+                        cached_data = json.load(f)
+                        token = cached_data.get("access_token")
+                        given_name = cached_data.get("given_name", "User")
+                        if token:
+                            self.page.session.store.set("drive_access_token", token)
+                            self.page.session.store.set("user_given_name", given_name)
+                except Exception:
+                    pass
+
+        is_logged_in = self.page.session.store.contains_key("drive_access_token")
+
+        # Mutate route safely to avoid infinite looping
+        if not is_logged_in and self.page.route != "/":
+            self.page.route = "/"
+
+        if is_logged_in and self.page.route == "/":
+            self.page.route = "/home"
+
+        # 2. Base Layer Logging Logic
         if self.page.route == "/":
             self.page.views.append(login_view(self.page))
         else:
@@ -26,17 +52,17 @@ class AppRouter:
         # We push these views ON TOP of the home view so the back button works naturally
         if self.page.route == "/settings":
             self.page.views.append(settings_view(self.page))
-            
+
         elif self.page.route.startswith("/viewer/"):
             # Extract the unique file ID from the URL string
             url_parts = self.page.route.split("/")
-            file_id = url_parts[-1] 
+            file_id = url_parts[-1]
             self.page.views.append(viewer_view(self.page, file_id))
 
         self.page.update()
 
-    def view_pop(self, e: ft.ViewPopEvent):
-        """Fires when the user clicks the physical Android back button or Appbar back arrow."""
+    async def view_pop(self, e: ft.ViewPopEvent):
+        """Fires when the user clicks the Android back button or Appbar back arrow."""
         self.page.views.pop()
         top_view = self.page.views[-1]
-        self.page.go(top_view.route)
+        await self.page.push_route(top_view.route)

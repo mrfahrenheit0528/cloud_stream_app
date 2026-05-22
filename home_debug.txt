@@ -1,0 +1,4 @@
+page.auth exists: True
+page.auth.user: None
+session user_given_name: None
+session drive_access_token: False

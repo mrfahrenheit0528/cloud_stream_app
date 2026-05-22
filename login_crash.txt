@@ -1,0 +1,6 @@
+CRASH in handle_login_result:
+Traceback (most recent call last):
+  File "F:\GitHub Repo\cloud_stream_app\src\services\google_auth.py", line 87, in handle_login_result
+    await page.on_route_change(ft.RouteChangeEvent(route="/home"))
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: RouteChangeEvent.__init__() missing 2 required positional arguments: 'name' and 'control'

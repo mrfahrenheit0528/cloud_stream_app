@@ -1,7 +1,6 @@
+import asyncio
 import flet as ft
 from datetime import datetime
-import urllib.request
-import json
 
 def home_view(page: ft.Page) -> ft.View:
     """The main dashboard screen (Route: "/home")"""
@@ -15,61 +14,55 @@ def home_view(page: ft.Page) -> ft.View:
     else:
         greeting = "Good evening"
 
-    # Extract the user's name directly from Google using our secure access token
+    # Extract the user's name, prioritizing their custom settings
     user_name = "User"
+    custom_name = page.session.store.get("user_display_name")
     
-    # Check if the key exists in the Flet session before accessing it
-    if page.session.contains_key("drive_access_token"):
-        token = page.session.get("drive_access_token")
-        try:
-            # Make a live API call to Google to prove the token works and get the profile
-            req = urllib.request.Request("https://www.googleapis.com/oauth2/v1/userinfo?alt=json")
-            req.add_header("Authorization", f"Bearer {token}")
-            with urllib.request.urlopen(req) as response:
-                user_info = json.loads(response.read())
-                user_name = user_info.get("given_name", user_info.get("name", "User"))
-        except Exception as e:
-            print(f"Failed to fetch profile from Google: {e}")
+    if custom_name:
+        user_name = custom_name
+    elif page.auth and page.auth.user:
+        user_name = page.auth.user.get("given_name", page.auth.user.get("name", "User"))
+    elif page.session.store.contains_key("user_given_name"):
+        user_name = page.session.store.get("user_given_name")
+        
+    # Get profile picture URL
+    profile_pic = page.session.store.get("profile_pic_url")
 
-    # Mock database layout mimicking incoming structure from your Google Drive scan
-    drive_media_cache = {
-        "Recent Camera Uploads": [
-            {"name": "IMG_001.jpg", "url": "https://picsum.photos/400/600?random=1"},
-            {"name": "IMG_002.jpg", "url": "https://picsum.photos/400/600?random=2"},
-            {"name": "IMG_003.jpg", "url": "https://picsum.photos/400/600?random=3"},
-            {"name": "IMG_004.jpg", "url": "https://picsum.photos/400/600?random=4"},
-            {"name": "IMG_005.jpg", "url": "https://picsum.photos/400/600?random=5"},
-        ],
-        "Vacation Videos": [
-            {"name": "VID_Shoreline.mp4", "url": "https://picsum.photos/400/600?random=6"},
-            {"name": "VID_Mountain.mp4", "url": "https://picsum.photos/400/600?random=7"},
-            {"name": "VID_Roadtrip.mp4", "url": "https://picsum.photos/400/600?random=8"},
-            {"name": "VID_Bonfire.mp4", "url": "https://picsum.photos/400/600?random=9"},
-        ],
-        "Documents & Captures": [
-            {"name": "Receipt_01.png", "url": "https://picsum.photos/400/600?random=10"},
-            {"name": "Invoice_May.png", "url": "https://picsum.photos/400/600?random=11"},
-            {"name": "Notes_Draft.jpg", "url": "https://picsum.photos/400/600?random=12"},
-        ]
-    }
+    # Remove the hardcoded mock database
+    # We will populate the shelves dynamically via the drive_service.
 
     # Card Factory Component
     def build_media_card(item_data):
         """Constructs an individual asset poster card with anti-aliasing constraints."""
+        
+        # Determine the visual content (thumbnail or fallback icon)
+        image_src = item_data.get("url")
+        if image_src and image_src.startswith("http"):
+            visual_content = ft.Image(src=image_src, fit="cover", expand=True)
+        else:
+            # Fallback for music or missing thumbnails
+            is_audio = item_data.get("is_audio", False)
+            icon_name = ft.Icons.MUSIC_NOTE if is_audio else ft.Icons.IMAGE_NOT_SUPPORTED
+            visual_content = ft.Container(
+                content=ft.Icon(icon_name, size=40, color="white54"),
+                alignment=ft.Alignment(0, 0),
+                expand=True
+            )
+
+        def on_card_tap(e, data=item_data):
+            page.session.store.set("current_media", data)
+            asyncio.create_task(page.push_route(f"/viewer/{data['name']}"))
+
         return ft.GestureDetector(
-            on_tap=lambda e: page.push_route(f"/viewer/{item_data['name']}"),
+            on_tap=on_card_tap, 
             content=ft.Container(
                 width=130,
                 height=195,  # Traditional 2:3 streaming aspect ratio
                 border_radius=8,
-                bgcolor="#222222",
+                bgcolor="#333333",
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
                 content=ft.Stack([
-                    ft.Image(
-                        src=item_data["url"],
-                        fit="cover",
-                        expand=True,
-                    ),
+                    visual_content,
                     # Subtle dark text overlay at the bottom of the card for filenames
                     ft.Container(
                         alignment=ft.Alignment(-1.0, 1.0),
@@ -111,6 +104,14 @@ def home_view(page: ft.Page) -> ft.View:
             spacing=8
         )
 
+    # Create the profile avatar
+    avatar = ft.CircleAvatar(
+        radius=18,
+        background_image_src=profile_pic if profile_pic else None,
+        content=ft.Text(user_name[0].upper()) if not profile_pic else None,
+        bgcolor=ft.Colors.PRIMARY if not profile_pic else None,
+    )
+
     # Main App Scaffold Layout
     header_bar = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -119,21 +120,84 @@ def home_view(page: ft.Page) -> ft.View:
                 spacing=2,
                 controls=[
                     ft.Text(f"{greeting}, {user_name}!", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                    ft.Text("CloudStream", size=14, weight=ft.FontWeight.W_900, color="red"),
+                    ft.Text("CloudStream", size=14, weight=ft.FontWeight.W_900, color=ft.Colors.PRIMARY),
                 ]
             ),
-            ft.IconButton(icon=ft.Icons.SETTINGS, icon_color="white", on_click=lambda _: page.push_route("/settings"))
+            ft.Row(
+                spacing=10,
+                controls=[
+                    avatar,
+                    ft.IconButton(icon=ft.Icons.SETTINGS, icon_color="white", on_click=lambda _: asyncio.create_task(page.push_route("/settings")))
+                ]
+            )
         ]
     )
 
-    shelf_container = ft.ListView(
+    shelf_container = ft.Column(
         expand=True,
-        spacing=28,  # Generous gaps between major horizontal categories
-        controls=[
-            build_category_shelf(title, contents) 
-            for title, contents in drive_media_cache.items()
-        ]
+        spacing=28,
+        scroll=ft.ScrollMode.HIDDEN
     )
+
+    async def load_dashboard_content():
+        """Fetches the actual media from Google Drive and updates the UI."""
+        shelf_container.controls.append(
+            ft.Container(content=ft.ProgressRing(), alignment=ft.Alignment(0, 0), padding=50)
+        )
+        page.update()
+        
+        from services.drive_service import get_media
+        token = page.session.store.get("drive_access_token")
+        folder_id = page.session.store.get("drive_folder_id")
+        
+        if not token:
+            shelf_container.controls.clear()
+            shelf_container.controls.append(ft.Text("Not authenticated. Please log in.", color="red"))
+            page.update()
+            return
+            
+        if not folder_id:
+            shelf_container.controls.clear()
+            shelf_container.controls.append(
+                ft.Container(
+                    alignment=ft.Alignment(0, 0),
+                    padding=40,
+                    content=ft.Column([
+                        ft.Icon(ft.Icons.FOLDER_OFF, size=48, color="gray"),
+                        ft.Text("No folder selected.", size=18, color="white"),
+                        ft.Text("Please go to Settings and browse for your Google Drive folder.", color="gray")
+                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                )
+            )
+            page.update()
+            return
+
+        media = await get_media(token, folder_id)
+        shelf_container.controls.clear()
+        
+        if not media:
+            shelf_container.controls.append(
+                ft.Text("No photos or videos found in this folder.", italic=True, color="gray")
+            )
+            page.update()
+            return
+            
+        # Categorize media by mimeType, keeping id and mimeType intact for playback
+        photos = [{"id": m["id"], "mimeType": m["mimeType"], "name": m["name"], "url": m.get("thumbnailLink", ""), "is_audio": False} for m in media if "image/" in m.get("mimeType", "")]
+        videos = [{"id": m["id"], "mimeType": m["mimeType"], "name": m["name"], "url": m.get("thumbnailLink", ""), "is_audio": False} for m in media if "video/" in m.get("mimeType", "")]
+        music = [{"id": m["id"], "mimeType": m["mimeType"], "name": m["name"], "url": m.get("thumbnailLink", ""), "is_audio": True} for m in media if "audio/" in m.get("mimeType", "")]
+        
+        if photos:
+            shelf_container.controls.append(build_category_shelf("Photos", photos))
+        if videos:
+            shelf_container.controls.append(build_category_shelf("Videos", videos))
+        if music:
+            shelf_container.controls.append(build_category_shelf("Music", music))
+            
+        page.update()
+        
+    # Kick off the data fetch in the background as soon as the view renders
+    asyncio.create_task(load_dashboard_content())
 
     # Return the assembled View object!
     return ft.View(

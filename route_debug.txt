@@ -1,0 +1,12 @@
+Route changed to: '/' | Logged in: False
+Route changed to: '/' | Logged in: False
+Route changed to: '/' | Logged in: False
+Route changed to: '/api/oauth/redirect?state=BGo5mJ0pk6PSjI32ukwG3A&iss=https://accounts.google.com&code=4/0AeoWuM-BBDwn3A375SGz0sZOUUP9-4Pluz0nwXjaIFFTH2I30pj7_0Ca32CJ0-XHjh4ULA&scope=email%20profile%20https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/userinfo.profile%20https://www.googleapis.com/auth/userinfo.email%20openid&authuser=1&prompt=consent' | Logged in: False
+Route changed to: '/home' | Logged in: False
+Auth guard triggered. Redirecting from /home to /
+Route changed to: '/' | Logged in: False
+Route changed to: '/api/oauth/redirect?state=HTWce2rjWHwPXpiyvPqP2w&iss=https://accounts.google.com&code=4/0AeoWuM8LqavgjZv8z7dkjER9V9VylJouM9lAm03xNx9bV5-4I-TyBL7p2Phmh3GvPHG0XA&scope=email%20profile%20https://www.googleapis.com/auth/drive.readonly%20https://www.googleapis.com/auth/userinfo.profile%20https://www.googleapis.com/auth/userinfo.email%20openid&authuser=1&prompt=consent' | Logged in: False
+Route changed to: '/settings' | Logged in: False
+Auth guard triggered. Redirecting from /settings to /
+Route changed to: '/' | Logged in: False
+Route changed to: '/api/oauth/redirect?state=HTWce2rjWHwPXpiyvPqP2w&iss=https://accounts.google.com&code=4/0AeoWuM8LqavgjZv8z7dkjER9V9VylJouM9lAm03xNx9bV5-4I-TyBL7p2Phmh3GvPHG0XA&scope=email+profile+https://www.googleapis.com/auth/drive.readonly+https://www.googleapis.com/auth/userinfo.profile+https://www.googleapis.com/auth/userinfo.email+openid&authuser=1&prompt=consent' | Logged in: False
