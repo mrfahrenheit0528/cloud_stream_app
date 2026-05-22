@@ -3,3 +3,9 @@
 .env
 .token.json
 .prefs.json
+src/.metadata_cache/
+src/__pycache__/
+src/ui/__pycache__/
+src/views/__pycache__/
+src/services/__pycache__/
+src/ui/views/__pycache__/

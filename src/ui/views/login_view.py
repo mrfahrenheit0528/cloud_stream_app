@@ -8,7 +8,7 @@ _COMPLETE_PAGE_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Signed in to CloudStream</title>
+  <title>Signed in to E-stream'o</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -33,7 +33,7 @@ _COMPLETE_PAGE_HTML = """
   <div class="card">
     <div class="icon">✓</div>
     <h1>Signed in!</h1>
-    <p>You can close this tab and return to CloudStream.</p>
+    <p>You can close this tab and return to E-stream'o.</p>
   </div>
   <script>
     // Attempt to auto-close this tab after a short delay.
@@ -45,9 +45,10 @@ _COMPLETE_PAGE_HTML = """
 
 
 def login_view(page: ft.Page) -> ft.View:
-    """The initial landing screen (Route: \"/\")"""
+    """The initial landing screen (Route: "/")"""
 
     provider = get_google_provider()
+    current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     async def on_login_click(e):
         # Flet's default behavior in web mode is to use UrlLauncher().open_window(url)
@@ -86,15 +87,15 @@ def login_view(page: ft.Page) -> ft.View:
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         vertical_alignment=ft.MainAxisAlignment.CENTER,
         controls=[
-            ft.Icon(ft.Icons.CLOUD_DONE, size=80, color="#E50914"),
-            ft.Text("CloudStream", size=32, weight=ft.FontWeight.W_900, color="white"),
+            ft.Icon(ft.Icons.CLOUD_DONE, size=80, color=current_theme),
+            ft.Text("E-stream'o", size=32, weight=ft.FontWeight.W_900, color="white"),
             ft.Text("Access your Drive media beautifully.", size=14, color="#AAAAAA"),
             ft.Container(height=30),  # Spacer
             ft.ElevatedButton(
                 "Sign in with Google",
                 icon=ft.Icons.LOGIN,
                 color="white",
-                bgcolor="#E50914",
+                bgcolor=current_theme,
                 on_click=on_login_click,
             ),
         ],

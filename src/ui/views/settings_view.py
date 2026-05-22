@@ -8,7 +8,7 @@ def settings_view(page: ft.Page) -> ft.View:
     current_name = page.session.store.get("user_display_name") or ""
     current_pic = page.session.store.get("profile_pic_url") or ""
     current_folder = page.session.store.get("drive_folder_id") or ""
-    current_theme = page.session.store.get("theme_color") or ft.Colors.RED
+    current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     # Input Controls
     name_field = ft.TextField(
@@ -48,7 +48,23 @@ def settings_view(page: ft.Page) -> ft.View:
             page.update()
             return
             
-        folders = await get_folders(token, parent_id)
+        try:
+            folders = await get_folders(token, parent_id)
+        except Exception as e:
+            if "UNAUTHENTICATED" in str(e):
+                import os
+                if os.path.exists(".token.json"):
+                    try:
+                        os.remove(".token.json")
+                    except Exception:
+                        pass
+                page.session.store.clear()
+                page.logout()
+                await page.push_route("/")
+                page.update()
+                return
+            else:
+                folders = []
         dlg_content.controls.clear()
         
         if len(drive_history) > 1:
@@ -127,7 +143,7 @@ def settings_view(page: ft.Page) -> ft.View:
         update_color_selection()
 
     # Theme Swatches
-    color_options = [ft.Colors.RED, ft.Colors.GREEN, ft.Colors.BLUE, ft.Colors.YELLOW]
+    color_options = [ft.Colors.RED_700, ft.Colors.GREEN_700, ft.Colors.BLUE_700, ft.Colors.AMBER_700, ft.Colors.PURPLE_700]
     color_row = ft.Row(
         controls=[
             ft.Container(

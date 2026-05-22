@@ -1,5 +1,15 @@
 import flet as ft
 from dotenv import load_dotenv
+import subprocess
+import sys
+
+# Auto-install mutagen for ID3 Parsing
+try:
+    import mutagen
+except ImportError:
+    print("Mutagen not found. Installing automatically for high-performance ID3 caching...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "mutagen"], check=True)
+    import mutagen
 
 # Load variables BEFORE importing the router
 load_dotenv(override=True)
@@ -8,7 +18,7 @@ from ui.router import AppRouter
 from services.google_auth import handle_login_result
 
 async def main(page: ft.Page):
-    page.title = "CloudStream"
+    page.title = "E-stream'o"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#111111"
 
@@ -26,7 +36,7 @@ async def main(page: ft.Page):
             pass
 
     # Load custom theme color if the user saved one in settings
-    saved_theme = page.session.store.get("theme_color") or ft.Colors.RED
+    saved_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
     page.theme = ft.Theme(color_scheme_seed=saved_theme)
 
     app_router = AppRouter(page)
@@ -54,5 +64,7 @@ if __name__ == "__main__":
     ft.run(
         main,
         view=ft.AppView.FLET_APP,
+        # view=ft.AppView.WEB_BROWSER,
         port=8550,
+        assets_dir="../assets"
     )
