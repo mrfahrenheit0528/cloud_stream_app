@@ -69,7 +69,7 @@ def home_view(page: ft.Page) -> ft.View:
             page.session.store.set("current_media", hero_state["media"])
             if hero_state.get("gallery"):
                 page.session.store.set("current_gallery", hero_state["gallery"])
-            asyncio.create_task(page.push_route(f"/viewer/{hero_state['media']['name']}"))
+            page.run_task(page.push_route, f"/viewer/{hero_state['media']['name']}")
             
     hero_play_container = ft.Container(
         content=ft.Row([
@@ -203,7 +203,9 @@ def home_view(page: ft.Page) -> ft.View:
                 hero_title.opacity = 0
                 hero_subtitle.opacity = 0
                 hero_play_btn.opacity = 0
-                page.update()
+                if page.route == "/home":
+                    try: page.update()
+                    except Exception: pass
                 
                 # Wait for the fade out to finish (allows image loading in background)
                 await asyncio.sleep(0.4)
@@ -249,7 +251,9 @@ def home_view(page: ft.Page) -> ft.View:
                 hero_title.opacity = 1
                 hero_subtitle.opacity = 1
                 hero_play_btn.opacity = 1
-                page.update()
+                if page.route == "/home":
+                    try: page.update()
+                    except Exception: pass
             except Exception:
                 pass
 
@@ -271,10 +275,10 @@ def home_view(page: ft.Page) -> ft.View:
                                 break
                         audio_state.set_queue(audio_queue, idx)
                         
-                asyncio.create_task(page.push_route(f"/viewer/{data['name']}"))
+                page.run_task(page.push_route, f"/viewer/{data['name']}")
             else:
                 # First click -> Update Hero Banner
-                asyncio.create_task(update_hero_banner(data, parent_list))
+                page.run_task(update_hero_banner, data, parent_list)
 
         focus_overlay = ft.Container(
             border=ft.Border(
@@ -296,7 +300,7 @@ def home_view(page: ft.Page) -> ft.View:
                     left=ft.BorderSide(4, ft.Colors.PRIMARY)
                 )
                 import asyncio
-                asyncio.create_task(update_hero_banner(item_data, parent_list))
+                page.run_task(update_hero_banner, item_data, parent_list)
             else:
                 focus_overlay.border = ft.Border(
                     top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
@@ -334,7 +338,7 @@ def home_view(page: ft.Page) -> ft.View:
         
         btn = ft.GestureDetector(
             key=card_key,
-            on_tap=lambda e: asyncio.create_task(on_card_tap(e)),
+            on_tap=lambda e: page.run_task(on_card_tap, e),
             content=ft.Container(
                 width=card_w,
                 height=card_h,
@@ -350,7 +354,7 @@ def home_view(page: ft.Page) -> ft.View:
             "card_w": card_w,
             "horizontal_row": horizontal_row,
             "set_focus": set_focus,
-            "click": lambda: asyncio.create_task(on_card_tap(None))
+            "click": lambda: page.run_task(on_card_tap, None)
         }
         return btn
 
@@ -418,12 +422,12 @@ def home_view(page: ft.Page) -> ft.View:
 
     settings_button = ft.GestureDetector(
         content=avatar_container,
-        on_tap=lambda _: asyncio.create_task(page.push_route("/settings"))
+        on_tap=lambda _: page.run_task(page.push_route, "/settings")
     )
     settings_button.focus_node = {
         "is_card": False,
         "set_focus": on_settings_focus,
-        "click": lambda: asyncio.create_task(page.push_route("/settings"))
+        "click": lambda: page.go("/settings") if page.route != "/settings" else None
     }
 
     # Main App Scaffold Layout
@@ -449,10 +453,20 @@ def home_view(page: ft.Page) -> ft.View:
 
     async def load_dashboard_content():
         """Fetches the actual media from Google Drive and updates the UI."""
-        shelf_container.controls.append(
-            ft.Container(content=ft.ProgressRing(), alignment=ft.Alignment(0, 0), padding=50)
-        )
-        page.update()
+        def safe_update():
+            if page.route == "/home":
+                try: page.update()
+                except Exception: pass
+
+        if page.route != "/home":
+            return
+            
+        try:
+            shelf_container.controls.append(
+                ft.Container(content=ft.ProgressRing(), alignment=ft.Alignment(0, 0), padding=50)
+            )
+            safe_update()
+        except RuntimeError: return
         
         from services.drive_service import get_media
         token = page.session.store.get("drive_access_token")
@@ -461,7 +475,8 @@ def home_view(page: ft.Page) -> ft.View:
         if not token:
             shelf_container.controls.clear()
             shelf_container.controls.append(ft.Text("Not authenticated. Please log in.", color="red"))
-            page.update()
+            page.session.store.set("home_focus_grid", [[settings_button.focus_node]])
+            safe_update()
             return
             
         if not folder_id:
@@ -477,39 +492,47 @@ def home_view(page: ft.Page) -> ft.View:
                     ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
                 )
             )
-            page.update()
+            page.session.store.set("home_focus_grid", [[settings_button.focus_node]])
+            safe_update()
             return
 
-        try:
-            media = await get_media(token, folder_id)
-            shelf_container.controls.clear()
-        except Exception as e:
-            if "UNAUTHENTICATED" in str(e):
-                import os
-                if os.path.exists(".token.json"):
-                    try:
-                        os.remove(".token.json")
-                    except Exception:
-                        pass
-                page.session.store.clear()
-                page.logout()
-                await page.push_route("/")
-                page.update()
-                return
-            else:
+        media_groups = page.session.store.get("home_cached_media_groups")
+        cached_folder_id = page.session.store.get("home_cached_folder_id")
+
+        if not media_groups or cached_folder_id != folder_id:
+            try:
+                media_groups = await get_media(token, folder_id)
+                page.session.store.set("home_cached_media_groups", media_groups)
+                page.session.store.set("home_cached_folder_id", folder_id)
                 shelf_container.controls.clear()
-                shelf_container.controls.append(ft.Text("An error occurred while loading media.", color="red"))
-                page.update()
-                return
-        
-        media_groups = await get_media(token, folder_id)
-        shelf_container.controls.clear()
+            except Exception as e:
+                if "UNAUTHENTICATED" in str(e):
+                    import os
+                    if os.path.exists(".token.json"):
+                        try:
+                            os.remove(".token.json")
+                        except Exception:
+                            pass
+                    page.session.store.clear()
+                    page.logout()
+                    await page.push_route("/")
+                    safe_update()
+                    return
+                else:
+                    shelf_container.controls.clear()
+                    shelf_container.controls.append(ft.Text("An error occurred while loading media.", color="red"))
+                    page.session.store.set("home_focus_grid", [[settings_button.focus_node]])
+                    safe_update()
+                    return
+        else:
+            shelf_container.controls.clear()
         
         if not media_groups or all(len(g["files"]) == 0 for g in media_groups):
             shelf_container.controls.append(
                 ft.Text("No photos or videos found in this folder.", italic=True, color="gray")
             )
-            page.update()
+            page.session.store.set("home_focus_grid", [[settings_button.focus_node]])
+            safe_update()
             return
             
         def extract_dims(m):
@@ -523,6 +546,9 @@ def home_view(page: ft.Page) -> ft.View:
             return w, h
 
         from services.metadata_service import get_audio_metadata
+        
+        cached_processed_dict = page.session.store.get("home_cached_processed_items") or {}
+        new_processed_dict = {}
 
         for group in media_groups:
             files = group["files"]
@@ -557,8 +583,13 @@ def home_view(page: ft.Page) -> ft.View:
                     "category": cat
                 }
 
-            # Concurrently parse all ID3 tags in this folder!
-            processed_items = await asyncio.gather(*[process_item(m) for m in files])
+            if folder_name in cached_processed_dict:
+                processed_items = cached_processed_dict[folder_name]
+            else:
+                raw_results = await asyncio.gather(*[process_item(m) for m in files], return_exceptions=True)
+                processed_items = [r for r in raw_results if isinstance(r, dict)]
+                
+            new_processed_dict[folder_name] = processed_items
                 
             if folder_name == "Root":
                 photos = [i for i in processed_items if not i["is_audio"] and "image/" in i["mimeType"]]
@@ -574,6 +605,8 @@ def home_view(page: ft.Page) -> ft.View:
             else:
                 # Group all media within a subfolder into its own dedicated category shelf
                 shelf_container.controls.append(build_category_shelf(folder_name, processed_items))
+                
+        page.session.store.set("home_cached_processed_items", new_processed_dict)
                 
         # Build the 2D Grid for strict Up/Down/Left/Right HTPC Navigation!
         grid = []
@@ -596,7 +629,7 @@ def home_view(page: ft.Page) -> ft.View:
             if page.session.store.get("home_grid_pos") is None:
                 page.session.store.set("home_grid_pos", (0, 0))
                 
-            page.update()
+            safe_update()
         except Exception:
             pass
         
@@ -605,6 +638,13 @@ def home_view(page: ft.Page) -> ft.View:
         if not grid: return
         
         r, c = page.session.store.get("home_grid_pos") or (0, 0)
+        
+        # Guard against dynamic grid mutations
+        r = min(max(0, r), len(grid) - 1)
+        if len(grid) > 0 and len(grid[r]) > 0:
+            c = min(max(0, c), len(grid[r]) - 1)
+        else:
+            return
         
         old_node = grid[r][c]
         try:
@@ -623,8 +663,10 @@ def home_view(page: ft.Page) -> ft.View:
             c = 0
         elif e.key == "Enter" or e.key == "Space":
             try:
-                old_node["click"]()
+                res = old_node["click"]()
                 old_node["set_focus"](True)
+                if hasattr(res, "__await__"):
+                    await res
             except Exception: pass
             return
         else:
@@ -667,14 +709,16 @@ def home_view(page: ft.Page) -> ft.View:
                     async def safe_scroll(c):
                         try: await c
                         except Exception: pass
-                    asyncio.create_task(safe_scroll(res))
+                    page.run_task(safe_scroll, res)
                 row.update()
             except Exception: pass
             
     page.session.store.set("keyboard_handler", home_keyboard)
+    page.session.store.set("home_keyboard_handler", home_keyboard)  # Persistent key for router cache restoration
         
-    # Kick off the data fetch in the background as soon as the view renders
-    asyncio.create_task(load_dashboard_content())
+    # Kick off the data fetch in the background only if the user is actually looking at the dashboard
+    if page.route == "/home":
+        page.run_task(load_dashboard_content)
 
     # Apply a shader mask to the shelves to create a cinematic fade at the top
     masked_shelves = ft.ShaderMask(

@@ -51,7 +51,12 @@ async def main(page: ft.Page):
             fv = None
 
     if fv:
-        global_audio_engine = fv.Video(width=50, height=50, opacity=0.01, autoplay=True, visible=True)
+        # IMPORTANT: Use autoplay=False with no playlist for the placeholder engine.
+        # autoplay=True on an empty Video widget crashes Flutter's media_kit plugin
+        # after ~5 seconds, causing the WebSocket to drop and the entire session to
+        # restart in an infinite loop. The real engine (with autoplay=True and actual
+        # media) is created in audio_service.play_index() when audio actually plays.
+        global_audio_engine = fv.Video(width=1, height=1, opacity=0.0, autoplay=False, visible=False)
         page.overlay.append(global_audio_engine)
         from services.audio_service import GlobalAudioState
         page.session.store.set("audio_state", GlobalAudioState(page, global_audio_engine))
@@ -59,7 +64,18 @@ async def main(page: ft.Page):
     page.on_route_change = app_router.route_change
     page.on_view_pop = app_router.view_pop
 
+    import time
+    last_key_time = 0
+
     def on_keyboard(e: ft.KeyboardEvent):
+        nonlocal last_key_time
+        now = time.time()
+        # Enforce a strict 150ms hardware debounce to prevent remote control key-repeat spam
+        # from queuing dozens of synchronous page.go() route transitions in Flet's event loop
+        if now - last_key_time < 0.15:
+            return
+        last_key_time = now
+        
         handler = page.session.store.get("keyboard_handler")
         if handler:
             import asyncio

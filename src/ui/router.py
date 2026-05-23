@@ -11,6 +11,7 @@ class AppRouter:
     """Handles the navigation state and view stacking for the application."""
     def __init__(self, page: ft.Page):
         self.page = page
+        self._cached_home_view = None  # Cache to prevent repeated rebuilds
 
     async def route_change(self, e: ft.RouteChangeEvent):
         """Fires whenever push_route() is called. Must be async to use await push_route()."""
@@ -27,9 +28,13 @@ class AppRouter:
                         cached_data = json.load(f)
                         token = cached_data.get("access_token")
                         given_name = cached_data.get("given_name", "User")
+                        picture_url = cached_data.get("picture_url", "")
                         if token:
                             self.page.session.store.set("drive_access_token", token)
                             self.page.session.store.set("user_given_name", given_name)
+                            if not self.page.session.store.contains_key("user_display_name"):
+                                self.page.session.store.set("user_display_name", given_name)
+                            self.page.session.store.set("profile_pic_url", picture_url)
                 except Exception:
                     pass
 
@@ -44,13 +49,25 @@ class AppRouter:
 
         # 2. Base Layer Logging Logic
         if self.page.route == "/":
+            self._cached_home_view = None  # Clear cache on logout so fresh data loads after re-login
             self.page.views.append(login_view(self.page))
         else:
-            # If not on login screen, the Home screen is always the base layer
-            # We disable it if it's covered by an overlay to prevent focus and click bleeding
-            h_view = home_view(self.page)
+            # If not on login screen, the Home screen is always the base layer.
+            # We CACHE the home view so that navigating to /settings and back
+            # does NOT rebuild the home view, which would re-schedule the background
+            # data-fetch task and cause the "reload" visual glitch.
+            # Exception: if settings were just saved, we invalidate the cache so the
+            # home view rebuilds with the updated name, theme, and folder.
+            if self.page.session.store.get("home_needs_refresh"):
+                self.page.session.store.set("home_needs_refresh", False)
+                self._cached_home_view = None
+            if self._cached_home_view is None:
+                self._cached_home_view = home_view(self.page)
+            h_view = self._cached_home_view
             if self.page.route != "/home":
                 h_view.controls[0].disabled = True
+            else:
+                h_view.controls[0].disabled = False
             self.page.views.append(h_view)
 
         # 2. View Stacking (Overlays)
@@ -63,6 +80,14 @@ class AppRouter:
             url_parts = self.page.route.split("/")
             file_id = url_parts[-1]
             self.page.views.append(viewer_view(self.page, file_id))
+
+        # Re-register the keyboard handler for the current route.
+        # Because the home view is cached (not rebuilt), we store its handler separately
+        # and restore it here every time we land on /home.
+        if self.page.route == "/home":
+            saved_home_kb = self.page.session.store.get("home_keyboard_handler")
+            if saved_home_kb:
+                self.page.session.store.set("keyboard_handler", saved_home_kb)
 
         self.page.update()
 

@@ -66,10 +66,12 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
         # page.auth.user is a User (dict subclass) populated from Google's userinfo
         # endpoint, provided GoogleOAuthProvider sets user_endpoint and fetch_user=True.
         given_name = "User"
+        picture_url = ""
         if page.auth.user:
             given_name = page.auth.user.get(
                 "given_name", page.auth.user.get("name", "User")
             )
+            picture_url = page.auth.user.get("picture", "")
 
         print(f"Login successful for '{given_name}'. Storing token and navigating...")
 
@@ -79,7 +81,8 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
             with open(token_cache_path, "w") as f:
                 json.dump({
                     "access_token": access_token,
-                    "given_name": given_name
+                    "given_name": given_name,
+                    "picture_url": picture_url
                 }, f)
         except Exception as err:
             print(f"Could not write token cache: {err}")
@@ -87,6 +90,8 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
         # Store credentials in the session for the auth guard and home view.
         page.session.store.set("drive_access_token", access_token)
         page.session.store.set("user_given_name", given_name)
+        page.session.store.set("user_display_name", given_name)
+        page.session.store.set("profile_pic_url", picture_url)
 
         # In Flet 0.85+, page.go() handles routing and automatically triggers on_route_change
         page.go("/home")
