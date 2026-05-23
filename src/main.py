@@ -59,6 +59,17 @@ async def main(page: ft.Page):
     page.on_route_change = app_router.route_change
     page.on_view_pop = app_router.view_pop
 
+    def on_keyboard(e: ft.KeyboardEvent):
+        handler = page.session.store.get("keyboard_handler")
+        if handler:
+            import asyncio
+            if asyncio.iscoroutinefunction(handler):
+                page.run_task(handler, e)
+            else:
+                handler(e)
+            
+    page.on_keyboard_event = on_keyboard
+
     # on_login fires on the SAME page session in web mode.
     # Must be async so we can await push_route() properly.
     async def on_login(e: ft.LoginEvent):

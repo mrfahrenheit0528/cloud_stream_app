@@ -24,6 +24,7 @@ class GlobalAudioState:
         
         self.pos_ms = 0
         self.dur_ms = 0
+        self.stuck_count = 0
         
         self.ui_callbacks = []
         
@@ -32,25 +33,34 @@ class GlobalAudioState:
         
     async def _poll_loop(self):
         while True:
-            if not self.engine.page:
-                break
+            try:
+                if getattr(self.engine, "page", None) is None:
+                    await asyncio.sleep(0.5)
+                    continue
+            except Exception:
+                pass
                 
             if self.is_playing and self.queue and self.current_index >= 0:
+                # 1. Check if the native engine reports playback as fully completed
                 try:
-                    dur = await self.engine.get_duration()
-                    pos = await self.engine.get_current_position()
-                    if dur is not None: self.dur_ms = int(dur)
-                    if pos is not None: self.pos_ms = int(pos)
-                    
-                    # Auto-skip detection
-                    if self.dur_ms > 0 and self.pos_ms >= self.dur_ms - 500:
+                    is_done = await self.engine.is_completed()
+                    if is_done:
                         await self.next()
                         continue
-                except Exception: 
-                    pass
+                except Exception: pass
                 
-            self.notify_ui()
-            await asyncio.sleep(1)
+                # 2. Keep duration and position updated for future UI hooks
+                try:
+                    dur = await self.engine.get_duration()
+                    if dur and int(dur) > 0: self.dur_ms = int(dur)
+                except Exception: pass
+                
+                try:
+                    pos = await self.engine.get_current_position()
+                    if pos is not None: self.pos_ms = int(pos)
+                except Exception: pass
+                
+            await asyncio.sleep(0.3)
             
     def notify_ui(self):
         for cb in self.ui_callbacks:
@@ -72,38 +82,48 @@ class GlobalAudioState:
                 http_headers={"Authorization": f"Bearer {token}"},
                 extras={"cache": "yes", "hwdec": "auto"}
             )
-            self.engine.playlist = [media]
-            self.engine.update()
+            
+            # BYPASS FLUTTER CRASH: Destroy and Recreate the engine entirely!
+            # Modifying the playlist while show_controls=False crashes the native Flutter plugin.
+            # Recreating the widget guarantees a pristine native state and prevents Arrow Key interception!
+            try: self.page.overlay.remove(self.engine)
+            except Exception: pass
+            
+            self.engine = fv.Video(
+                playlist=[media],
+                width=0, height=0, opacity=0.01, autoplay=True, visible=True, show_controls=False
+            )
+            self.page.overlay.append(self.engine)
+            self.page.update()
             
             # Reset time tracker state immediately before playback updates
             self.pos_ms = 0
             self.dur_ms = 0
+            self.stuck_count = 0
             self.is_playing = True
-            # Let the Flet UI flush before trying to await play, though Flet usually queues it fine
             self.notify_ui()
-            
-            try:
-                # Slight delay to ensure engine accepted playlist
-                await asyncio.sleep(0.1)
-                await self.engine.play()
-            except Exception:
-                pass
         
     async def toggle_play(self):
         if self.is_playing:
+            self.engine.autoplay = False
             try: await self.engine.pause()
+            except: pass
+            try: self.engine.update()
             except: pass
             self.is_playing = False
         else:
+            self.engine.autoplay = True
             try: await self.engine.play()
+            except: pass
+            try: self.engine.update()
             except: pass
             self.is_playing = True
         self.notify_ui()
         
     async def stop_audio(self):
+        self.engine.autoplay = False
         try: await self.engine.pause()
         except: pass
-        self.engine.playlist = []
         try: self.engine.update()
         except: pass
         self.is_playing = False

@@ -65,25 +65,57 @@ def home_view(page: ft.Page) -> ft.View:
     
     def on_hero_play_click(e):
         if hero_state["media"]:
+            # Play the hero media
             page.session.store.set("current_media", hero_state["media"])
+            if hero_state.get("gallery"):
+                page.session.store.set("current_gallery", hero_state["gallery"])
             asyncio.create_task(page.push_route(f"/viewer/{hero_state['media']['name']}"))
             
-    hero_play_btn = ft.ElevatedButton(
+    hero_play_container = ft.Container(
         content=ft.Row([
             ft.Icon(ft.Icons.PLAY_ARROW_ROUNDED),
             ft.Text("Play Media", weight=ft.FontWeight.BOLD)
         ], tight=True),
         bgcolor=current_theme,
-        color="white",
-        on_click=on_hero_play_click,
-        visible=False,
-        opacity=0,
-        animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT),
-        style=ft.ButtonStyle(
-            padding=ft.Padding(left=30, right=30, top=20, bottom=20),
-            shape=ft.RoundedRectangleBorder(radius=8)
+        padding=ft.Padding(left=30, right=30, top=20, bottom=20),
+        border_radius=8,
+        border=ft.Border(
+            top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+            right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+            bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+            left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
         )
     )
+    
+    def on_hero_play_focus(focused):
+        if focused:
+            hero_play_container.border = ft.Border(
+                top=ft.BorderSide(3, ft.Colors.PRIMARY),
+                right=ft.BorderSide(3, ft.Colors.PRIMARY),
+                bottom=ft.BorderSide(3, ft.Colors.PRIMARY),
+                left=ft.BorderSide(3, ft.Colors.PRIMARY)
+            )
+        else:
+            hero_play_container.border = ft.Border(
+                top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
+            )
+        hero_play_container.update()
+
+    hero_play_btn = ft.GestureDetector(
+        content=hero_play_container,
+        on_tap=on_hero_play_click,
+        visible=False,
+        opacity=0,
+        animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT)
+    )
+    hero_play_btn.focus_node = {
+        "is_card": False,
+        "set_focus": on_hero_play_focus,
+        "click": lambda: on_hero_play_click(None)
+    }
 
     # We make the hero_banner expand natively without a fixed height constraint
     hero_banner = ft.Container(
@@ -127,7 +159,7 @@ def home_view(page: ft.Page) -> ft.View:
 
 
     # Card Factory Component
-    def build_media_card(item_data, parent_list=None):
+    def build_media_card(item_data, parent_list=None, horizontal_row=None, parent_row_key=None):
         """Constructs an individual asset poster card with anti-aliasing constraints."""
         
         is_audio = item_data.get("is_audio", False)
@@ -157,6 +189,70 @@ def home_view(page: ft.Page) -> ft.View:
                 height=card_h
             )
 
+        async def update_hero_banner(data, gallery_list=None):
+            try:
+                page.session.store.set("hero_update_target", data["id"])
+                if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
+                    return
+                    
+                hero_state["media"] = data
+                hero_state["gallery"] = gallery_list
+                
+                # --- PHASE 1: FADE OUT TO BLACK ---
+                hero_image.opacity = 0
+                hero_title.opacity = 0
+                hero_subtitle.opacity = 0
+                hero_play_btn.opacity = 0
+                page.update()
+                
+                # Wait for the fade out to finish (allows image loading in background)
+                await asyncio.sleep(0.4)
+                
+                # Debounce check: if user Arrowed past this card during the 400ms fade, abort!
+                if page.session.store.get("hero_update_target") != data["id"]:
+                    return
+                    
+                # --- PHASE 2: UPDATE CONTENT ---
+                img_url = data.get("url", "")
+                if img_url:
+                    # Force Google Drive API to return a 1080p high-res thumbnail
+                    if "googleusercontent.com" in img_url and "=" in img_url:
+                        base_url = img_url.split("=")[0]
+                        img_url = f"{base_url}=s1080"
+                    
+                    hero_opacity = 0.5
+                else:
+                    # Fallback to default cinematic background if media has no thumbnail
+                    img_url = default_bg
+                    hero_opacity = 0.4
+                
+                hero_image.src = img_url
+                hero_title.value = data["name"]
+                
+                if data.get("is_audio"):
+                    hero_subtitle.value = "Audio • High Quality"
+                    hero_play_container.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
+                    hero_play_container.content.controls[1].value = "Play Media"
+                elif "video/" in data.get("mimeType", ""):
+                    hero_subtitle.value = "Video • Ready to Stream"
+                    hero_play_container.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
+                    hero_play_container.content.controls[1].value = "Play Media"
+                else:
+                    hero_subtitle.value = "Photo • View Fullscreen"
+                    hero_play_container.content.controls[0].name = ft.Icons.IMAGE
+                    hero_play_container.content.controls[1].value = "View Image"
+                    
+                hero_play_btn.visible = True
+                
+                # --- PHASE 3: FADE CONTENT BACK IN ---
+                hero_image.opacity = hero_opacity
+                hero_title.opacity = 1
+                hero_subtitle.opacity = 1
+                hero_play_btn.opacity = 1
+                page.update()
+            except Exception:
+                pass
+
         async def on_card_tap(e, data=item_data):
             if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
                 # Second click -> Play the media!
@@ -178,60 +274,37 @@ def home_view(page: ft.Page) -> ft.View:
                 asyncio.create_task(page.push_route(f"/viewer/{data['name']}"))
             else:
                 # First click -> Update Hero Banner
-                hero_state["media"] = data
-                
-                # --- PHASE 1: FADE OUT TO BLACK ---
-                hero_image.opacity = 0
-                hero_title.opacity = 0
-                hero_subtitle.opacity = 0
-                hero_play_btn.opacity = 0
-                page.update()
-                
-                # Wait for the fade out to finish (allows image loading in background)
-                await asyncio.sleep(0.4)
-                
-                # --- PHASE 2: UPDATE CONTENT ---
-                img_url = data.get("url", "")
-                if img_url:
-                    # Force Google Drive API to return a 1080p high-res thumbnail
-                    if "googleusercontent.com" in img_url and "=" in img_url:
-                        base_url = img_url.split("=")[0]
-                        img_url = f"{base_url}=s1080"
-                    
-                    hero_opacity = 0.5
-                else:
-                    # Fallback to default cinematic background if media has no thumbnail
-                    img_url = default_bg
-                    hero_opacity = 0.4
-                
-                hero_image.src = img_url
-                hero_title.value = data["name"]
-                
-                if data.get("is_audio"):
-                    hero_subtitle.value = "Audio • High Quality"
-                    hero_play_btn.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
-                    hero_play_btn.content.controls[1].value = "Play Media"
-                elif "video/" in data.get("mimeType", ""):
-                    hero_subtitle.value = "Video • Ready to Stream"
-                    hero_play_btn.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
-                    hero_play_btn.content.controls[1].value = "Play Media"
-                else:
-                    hero_subtitle.value = "Photo • View Fullscreen"
-                    hero_play_btn.content.controls[0].name = ft.Icons.IMAGE
-                    hero_play_btn.content.controls[1].value = "View Image"
-                    
-                hero_play_btn.visible = True
-                
-                # --- PHASE 3: FADE CONTENT BACK IN ---
-                hero_image.opacity = hero_opacity
-                hero_title.opacity = 1
-                hero_subtitle.opacity = 1
-                hero_play_btn.opacity = 1
-                page.update()
+                asyncio.create_task(update_hero_banner(data, parent_list))
 
-        def on_card_hover(e):
-            e.control.content.scale = 1.05 if e.data == "true" else 1.0
-            e.control.content.update()
+        focus_overlay = ft.Container(
+            border=ft.Border(
+                top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
+            ),
+            border_radius=12,
+            left=0, right=0, top=0, bottom=0 # Fills the stack perfectly without pushing content
+        )
+
+        def set_focus(focused):
+            if focused:
+                focus_overlay.border = ft.Border(
+                    top=ft.BorderSide(4, ft.Colors.PRIMARY),
+                    right=ft.BorderSide(4, ft.Colors.PRIMARY),
+                    bottom=ft.BorderSide(4, ft.Colors.PRIMARY),
+                    left=ft.BorderSide(4, ft.Colors.PRIMARY)
+                )
+                import asyncio
+                asyncio.create_task(update_hero_banner(item_data, parent_list))
+            else:
+                focus_overlay.border = ft.Border(
+                    top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                    right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                    bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                    left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
+                )
+            focus_overlay.update()
 
         card_stack = ft.Stack([
             visual_content,
@@ -252,29 +325,49 @@ def home_view(page: ft.Page) -> ft.View:
                     color="white",
                     weight=ft.FontWeight.W_600
                 )
-            )
+            ),
+            focus_overlay
         ])
         
-        return ft.GestureDetector(
-            on_tap=on_card_tap, 
-            on_hover=on_card_hover,
-            mouse_cursor=ft.MouseCursor.CLICK,
+        import uuid
+        card_key = f"card_{uuid.uuid4()}"
+        
+        btn = ft.GestureDetector(
+            key=card_key,
+            on_tap=lambda e: asyncio.create_task(on_card_tap(e)),
             content=ft.Container(
                 width=card_w,
                 height=card_h,
                 border_radius=12,
-                bgcolor="#222222",
                 clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-                scale=1.0,
-                animate_scale=ft.Animation(300, ft.AnimationCurve.EASE_OUT_CUBIC),
                 content=card_stack
             )
         )
+        
+        btn.focus_node = {
+            "is_card": True,
+            "row_key": parent_row_key,
+            "card_w": card_w,
+            "horizontal_row": horizontal_row,
+            "set_focus": set_focus,
+            "click": lambda: asyncio.create_task(on_card_tap(None))
+        }
+        return btn
 
     # Horizontal Category Row Factory
     def build_category_shelf(category_title, items_list):
         """Creates a distinct vertical cluster containing a section title and a swipable row."""
+        import uuid
+        row_key = f"shelf_{uuid.uuid4()}"
+        
+        horizontal_row = ft.Row(
+            scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
+            spacing=12,
+        )
+        horizontal_row.controls = [build_media_card(item, items_list, horizontal_row, row_key) for item in items_list]
+        
         return ft.Column(
+            key=row_key,
             controls=[
                 ft.Text(
                     value=category_title,
@@ -282,11 +375,7 @@ def home_view(page: ft.Page) -> ft.View:
                     weight=ft.FontWeight.BOLD,
                     color="#E5E5E5"
                 ),
-                ft.Row(
-                    scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
-                    spacing=12,
-                    controls=[build_media_card(item, items_list) for item in items_list]
-                )
+                horizontal_row
             ],
             spacing=8
         )
@@ -299,11 +388,43 @@ def home_view(page: ft.Page) -> ft.View:
         bgcolor=ft.Colors.PRIMARY if not profile_pic else None,
     )
     
-    settings_button = ft.GestureDetector(
-        content=avatar,
-        on_tap=lambda _: asyncio.create_task(page.push_route("/settings")),
-        mouse_cursor=ft.MouseCursor.CLICK
+    transparent_border = ft.Border(
+        top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+        right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+        bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+        left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
     )
+    
+    primary_border = ft.Border(
+        top=ft.BorderSide(3, ft.Colors.PRIMARY),
+        right=ft.BorderSide(3, ft.Colors.PRIMARY),
+        bottom=ft.BorderSide(3, ft.Colors.PRIMARY),
+        left=ft.BorderSide(3, ft.Colors.PRIMARY)
+    )
+    
+    avatar_container = ft.Container(
+        content=avatar,
+        border_radius=25,
+        padding=0,
+        border=transparent_border
+    )
+    
+    def on_settings_focus(focused):
+        if focused:
+            avatar_container.border = primary_border
+        else:
+            avatar_container.border = transparent_border
+        avatar_container.update()
+
+    settings_button = ft.GestureDetector(
+        content=avatar_container,
+        on_tap=lambda _: asyncio.create_task(page.push_route("/settings"))
+    )
+    settings_button.focus_node = {
+        "is_card": False,
+        "set_focus": on_settings_focus,
+        "click": lambda: asyncio.create_task(page.push_route("/settings"))
+    }
 
     # Main App Scaffold Layout
     header_bar = ft.Row(
@@ -423,6 +544,8 @@ def home_view(page: ft.Page) -> ft.View:
                     if metadata.get("cover_path"):
                         thumb_url = metadata["cover_path"]
                         
+                cat = "Music" if is_audio else ("Photos" if "image/" in m.get("mimeType", "") else "Videos") if folder_name == "Root" else folder_name
+                
                 return {
                     "id": m["id"], 
                     "mimeType": m["mimeType"], 
@@ -430,7 +553,8 @@ def home_view(page: ft.Page) -> ft.View:
                     "url": thumb_url, 
                     "width": w, 
                     "height": h,
-                    "is_audio": is_audio
+                    "is_audio": is_audio,
+                    "category": cat
                 }
 
             # Concurrently parse all ID3 tags in this folder!
@@ -451,7 +575,103 @@ def home_view(page: ft.Page) -> ft.View:
                 # Group all media within a subfolder into its own dedicated category shelf
                 shelf_container.controls.append(build_category_shelf(folder_name, processed_items))
                 
-        page.update()
+        # Build the 2D Grid for strict Up/Down/Left/Right HTPC Navigation!
+        grid = []
+        top_row = [settings_button.focus_node]
+        if hero_play_btn.visible:
+            top_row.append(hero_play_btn.focus_node)
+        grid.append(top_row)
+        
+        for shelf in shelf_container.controls:
+            if isinstance(shelf, ft.Column) and len(shelf.controls) > 1:
+                row = shelf.controls[1]
+                if isinstance(row, ft.Row):
+                    grid_row = [c.focus_node for c in row.controls if c.visible is not False and hasattr(c, "focus_node")]
+                    if grid_row:
+                        grid.append(grid_row)
+                        
+        try:
+            page.session.store.set("home_focus_grid", grid)
+            
+            if page.session.store.get("home_grid_pos") is None:
+                page.session.store.set("home_grid_pos", (0, 0))
+                
+            page.update()
+        except Exception:
+            pass
+        
+    async def home_keyboard(e: ft.KeyboardEvent):
+        grid = page.session.store.get("home_focus_grid")
+        if not grid: return
+        
+        r, c = page.session.store.get("home_grid_pos") or (0, 0)
+        
+        old_node = grid[r][c]
+        try:
+            old_node["set_focus"](False)
+        except Exception: pass
+        
+        if e.key == "Arrow Right":
+            c = min(c + 1, len(grid[r]) - 1)
+        elif e.key == "Arrow Left":
+            c = max(c - 1, 0)
+        elif e.key == "Arrow Down":
+            r = min(r + 1, len(grid) - 1)
+            c = 0
+        elif e.key == "Arrow Up":
+            r = max(r - 1, 0)
+            c = 0
+        elif e.key == "Enter" or e.key == "Space":
+            try:
+                old_node["click"]()
+                old_node["set_focus"](True)
+            except Exception: pass
+            return
+        else:
+            try:
+                old_node["set_focus"](True)
+            except Exception: pass
+            return
+            
+        page.session.store.set("home_grid_pos", (r, c))
+        new_node = grid[r][c]
+        try:
+            new_node["set_focus"](True)
+        except Exception: pass
+        
+        try:
+            if r > 0:
+                target_y = max(0, (r - 1) * 240)
+                import asyncio
+                res = shelf_container.scroll_to(offset=target_y, duration=300)
+                if asyncio.iscoroutine(res):
+                    await res
+                shelf_container.update()
+            elif r == 0:
+                import asyncio
+                res = shelf_container.scroll_to(offset=0, duration=300)
+                if asyncio.iscoroutine(res):
+                    await res
+                shelf_container.update()
+        except Exception:
+            pass
+            
+        if new_node.get("is_card") and new_node.get("horizontal_row"):
+            try:
+                card_w = new_node.get("card_w", 180)
+                target_x = max(0, (c - 1) * (card_w + 12))
+                row = new_node["horizontal_row"]
+                import asyncio
+                res = row.scroll_to(offset=target_x, duration=300)
+                if asyncio.iscoroutine(res):
+                    async def safe_scroll(c):
+                        try: await c
+                        except Exception: pass
+                    asyncio.create_task(safe_scroll(res))
+                row.update()
+            except Exception: pass
+            
+    page.session.store.set("keyboard_handler", home_keyboard)
         
     # Kick off the data fetch in the background as soon as the view renders
     asyncio.create_task(load_dashboard_content())

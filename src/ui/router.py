@@ -14,6 +14,7 @@ class AppRouter:
 
     async def route_change(self, e: ft.RouteChangeEvent):
         """Fires whenever push_route() is called. Must be async to use await push_route()."""
+        self.page.session.store.set("keyboard_handler", None)
         self.page.views.clear()
 
         # 1. Fast-path Token Bypass for FLET_APP Native Desktop Mode
@@ -46,7 +47,11 @@ class AppRouter:
             self.page.views.append(login_view(self.page))
         else:
             # If not on login screen, the Home screen is always the base layer
-            self.page.views.append(home_view(self.page))
+            # We disable it if it's covered by an overlay to prevent focus and click bleeding
+            h_view = home_view(self.page)
+            if self.page.route != "/home":
+                h_view.controls[0].disabled = True
+            self.page.views.append(h_view)
 
         # 2. View Stacking (Overlays)
         # We push these views ON TOP of the home view so the back button works naturally
