@@ -1,11 +1,22 @@
+# Environments
 .venv/
-.vscode
 .env
+
+# App Data & Secrets
 .token.json
 .prefs.json
-src/.metadata_cache/
-src/__pycache__/
-src/ui/__pycache__/
-src/views/__pycache__/
-src/services/__pycache__/
-src/ui/views/__pycache__/
+.metadata_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# OS
+.DS_Store
+Thumbs.db
