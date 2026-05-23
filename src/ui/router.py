@@ -18,23 +18,19 @@ class AppRouter:
         self.page.session.store.set("keyboard_handler", None)
         self.page.views.clear()
 
-        # 1. Fast-path Token Bypass for FLET_APP Native Desktop Mode
-        token_cache_path = os.path.join(os.getcwd(), ".token.json")
+        # 1. Fast-path Token Bypass for Native Desktop/Mobile Mode
+        import os, tempfile, json
+        token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
         if not self.page.session.store.contains_key("drive_access_token"):
             if os.path.exists(token_cache_path):
-                import json
                 try:
                     with open(token_cache_path, "r") as f:
-                        cached_data = json.load(f)
-                        token = cached_data.get("access_token")
-                        given_name = cached_data.get("given_name", "User")
-                        picture_url = cached_data.get("picture_url", "")
-                        if token:
-                            self.page.session.store.set("drive_access_token", token)
-                            self.page.session.store.set("user_given_name", given_name)
-                            if not self.page.session.store.contains_key("user_display_name"):
-                                self.page.session.store.set("user_display_name", given_name)
-                            self.page.session.store.set("profile_pic_url", picture_url)
+                        data = json.load(f)
+                        self.page.session.store.set("drive_access_token", data["access_token"])
+                        # Only set user metadata if it hasn't been set by preferences
+                        if not self.page.session.store.contains_key("user_display_name"):
+                            self.page.session.store.set("user_display_name", data["given_name"])
+                        self.page.session.store.set("user_picture_url", data.get("picture_url", ""))
                 except Exception:
                     pass
 

@@ -507,10 +507,11 @@ def home_view(page: ft.Page) -> ft.View:
                 shelf_container.controls.clear()
             except Exception as e:
                 if "UNAUTHENTICATED" in str(e):
-                    import os
-                    if os.path.exists(".token.json"):
+                    import os, tempfile
+                    token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+                    if os.path.exists(token_cache_path):
                         try:
-                            os.remove(".token.json")
+                            os.remove(token_cache_path)
                         except Exception:
                             pass
                     page.session.store.clear()

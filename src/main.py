@@ -22,10 +22,11 @@ async def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#111111"
 
-    # Load persistent preferences
+    # Load persistent preferences securely using cross-platform temp directory
     import json
     import os
-    prefs_path = os.path.join(os.getcwd(), ".prefs.json")
+    import tempfile
+    prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
     if os.path.exists(prefs_path):
         try:
             with open(prefs_path, "r") as f:
@@ -92,7 +93,7 @@ async def main(page: ft.Page):
         await handle_login_result(e, page)
 
     page.on_login = on_login
-    
+
     # Initialize the app routing securely
     # Since main is async, we can directly await the route_change handler to build the views 
     # sequentially before the app even displays, avoiding all race conditions and empty screens!
@@ -100,13 +101,13 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    # If videos don't play in WEB_BROWSER mode (due to CORS), you can change this back to:
-    # view=ft.AppView.FLET_APP
-    # The app will now remember your login using the secure local .token.json file!
+    import os, tempfile
+    token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+    app_view = ft.AppView.FLET_APP if os.path.exists(token_cache_path) else ft.AppView.WEB_BROWSER
+
     ft.run(
         main,
-        view=ft.AppView.FLET_APP,
-        # view=ft.AppView.WEB_BROWSER,
+        view=app_view,
         port=8550,
         assets_dir="../assets"
     )

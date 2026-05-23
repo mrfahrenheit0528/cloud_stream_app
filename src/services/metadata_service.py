@@ -8,7 +8,8 @@ from urllib.error import HTTPError
 # We will lazily import mutagen so the app doesn't crash if it's not installed yet
 mutagen = None
 
-CACHE_DIR = os.path.join(os.getcwd(), "src", ".metadata_cache")
+import tempfile
+CACHE_DIR = os.path.join(tempfile.gettempdir(), "estreamo_metadata_cache")
 
 # Create the cache directory if it doesn't exist
 if not os.path.exists(CACHE_DIR):

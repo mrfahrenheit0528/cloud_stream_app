@@ -40,11 +40,6 @@ def get_google_provider() -> GoogleOAuthProvider:
 async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
     """
     Async callback fired by page.on_login when Google OAuth completes.
-
-    In Flet 0.85, page.auth is an AuthorizationService instance:
-      - page.auth.get_token()  → async, returns OAuthToken (has .access_token)
-      - page.auth.user         → User (dict subclass), populated if fetch_user=True
-      - There is NO page.auth.token property — that was from an older Flet version.
     """
     try:
         if e.error:
@@ -55,7 +50,6 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
             print("Login error: page.auth is None after login event.")
             return
 
-        # get_token() is async and handles token refresh internally.
         token = await page.auth.get_token()
         if token is None:
             print("Login error: get_token() returned None.")
@@ -63,20 +57,16 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
 
         access_token = token.access_token
 
-        # page.auth.user is a User (dict subclass) populated from Google's userinfo
-        # endpoint, provided GoogleOAuthProvider sets user_endpoint and fetch_user=True.
         given_name = "User"
         picture_url = ""
         if page.auth.user:
-            given_name = page.auth.user.get(
-                "given_name", page.auth.user.get("name", "User")
-            )
+            given_name = page.auth.user.get("given_name", page.auth.user.get("name", "User"))
             picture_url = page.auth.user.get("picture", "")
 
         print(f"Login successful for '{given_name}'. Storing token and navigating...")
 
-        # Save the token locally so FLET_APP mode can bypass OAuth
-        token_cache_path = os.path.join(os.getcwd(), ".token.json")
+        import os, tempfile, json
+        token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
         try:
             with open(token_cache_path, "w") as f:
                 json.dump({
@@ -87,22 +77,15 @@ async def handle_login_result(e: ft.LoginEvent, page: ft.Page):
         except Exception as err:
             print(f"Could not write token cache: {err}")
 
-        # Store credentials in the session for the auth guard and home view.
         page.session.store.set("drive_access_token", access_token)
         page.session.store.set("user_given_name", given_name)
         page.session.store.set("user_display_name", given_name)
         page.session.store.set("profile_pic_url", picture_url)
 
-        # In Flet 0.85+, page.go() handles routing and automatically triggers on_route_change
         page.go("/home")
 
     except Exception:
         import traceback
         error_msg = f"CRASH in handle_login_result:\n{traceback.format_exc()}"
         print(error_msg)
-        try:
-            with open("login_crash.txt", "w", encoding="utf-8") as f:
-                f.write(error_msg)
-        except Exception:
-            pass
         raise

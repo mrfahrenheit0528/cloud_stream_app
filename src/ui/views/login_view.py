@@ -46,35 +46,11 @@ def login_view(page: ft.Page) -> ft.View:
     current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     async def on_login_click(e):
-        try:
-            await page.login(
-                provider,
-                scope=GOOGLE_SCOPES,
-                complete_page_html=_COMPLETE_PAGE_HTML,
-            )
-        except NotImplementedError:
-            # Flet's page.login() is not supported in FLET_APP (desktop) mode.
-            # Open the web interface in the browser so they can authenticate.
-            import webbrowser
-            webbrowser.open("http://localhost:8550")
-            
-            def close_dlg(_):
-                dlg.open = False
-                page.update()
-                
-            dlg = ft.AlertDialog(
-                title=ft.Text("Browser Login Required"),
-                content=ft.Text(
-                    "We've opened a browser window for you to sign in.\n\n"
-                    "Because Flet's native desktop mode doesn't support built-in OAuth, "
-                    "you must sign in via the browser. Once you see 'Signed in!' in your browser, "
-                    "close this app and restart it — it will remember your login automatically."
-                ),
-                actions=[ft.TextButton("OK, I'll restart later", on_click=close_dlg)],
-            )
-            page.overlay.append(dlg)
-            dlg.open = True
-            page.update()
+        await page.login(
+            provider,
+            scope=GOOGLE_SCOPES,
+            complete_page_html=_COMPLETE_PAGE_HTML,
+        )
 
     # Google misconfiguration error screen
     if "state=" in page.route and "code=" in page.route:

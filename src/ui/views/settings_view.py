@@ -295,15 +295,14 @@ def settings_view(page: ft.Page) -> ft.View:
         page.session.store.set("drive_folder_id", extracted_id)
         page.session.store.set("theme_color", selected_color)
 
-        import json, os
-        prefs_path = os.path.join(os.getcwd(), ".prefs.json")
+        import json, os, tempfile
+        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
         prefs = {}
         if os.path.exists(prefs_path):
             try:
                 with open(prefs_path, "r") as f:
                     prefs = json.load(f)
-            except Exception:
-                pass
+            except Exception: pass
 
         prefs["user_display_name"] = name_field.value
         prefs["drive_folder_id"] = extracted_id
@@ -325,15 +324,13 @@ def settings_view(page: ft.Page) -> ft.View:
         page.update()
         is_saving = False
 
-    def perform_disconnect(e):
+    async def perform_disconnect(e):
         disconnect_dialog.open = False
         page.update()
 
-        # Delete the on-disk token so the router doesn't re-inject it
-        # during the upcoming route_change call (which reads .token.json).
-        import os
-        token_path = os.path.join(os.getcwd(), ".token.json")
-        prefs_path = os.path.join(os.getcwd(), ".prefs.json")
+        import os, tempfile
+        token_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
         for path in (token_path, prefs_path):
             try:
                 if os.path.exists(path):
