@@ -1,4 +1,5 @@
 import asyncio
+import urllib.parse
 import flet as ft
 
 def settings_view(page: ft.Page) -> ft.View:
@@ -6,7 +7,7 @@ def settings_view(page: ft.Page) -> ft.View:
 
     # Load existing preferences
     current_name = page.session.store.get("user_display_name") or ""
-    current_folder = page.session.store.get("drive_folder_id") or ""
+    current_folder = page.session.store.get("onedrive_folder_id") or ""
     current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     # ── Input Controls ──────────────────────────────────────────────────────
@@ -32,17 +33,55 @@ def settings_view(page: ft.Page) -> ft.View:
     )
 
     folder_field = ft.TextField(
-        label="Google Drive Folder ID / URL",
-        value=current_folder,
+        label="OneDrive Root Folder ID (or 'root')",
+        value=current_folder or "root",
         bgcolor="#111111",
         border_color="transparent",
         prefix_icon=ft.Icons.FOLDER_SHARED,
         expand=True,
     )
 
-    # ── Drive Picker Logic ───────────────────────────────────────────────────
+    # ── OneDrive Folder Picker Logic ─────────────────────────────────────────
     drive_history = ["root"]
     dlg_content = ft.Column(scroll=ft.ScrollMode.AUTO, height=300, width=400)
+
+    async def _get_onedrive_token() -> str:
+        """Get a valid OneDrive access token: refresh from stored refresh token first."""
+        rt = page.session.store.get("onedrive_refresh_token") or ""
+        if rt:
+            from services.onedrive_auth import refresh_access_token
+            try:
+                res = await refresh_access_token(rt)
+                page.session.store.set("onedrive_access_token", res["access_token"])
+                page.session.store.set("onedrive_refresh_token", res["refresh_token"])
+                
+                # Update persistent prefs file since refresh token rolls
+                import json, os, tempfile
+                prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+                prefs = {}
+                if os.path.exists(prefs_path):
+                    try:
+                        with open(prefs_path, "r") as f:
+                            prefs = json.load(f)
+                    except Exception: pass
+                prefs["onedrive_refresh_token"] = res["refresh_token"]
+                with open(prefs_path, "w") as f:
+                    json.dump(prefs, f)
+                    
+                # Update token cache as well
+                token_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+                if os.path.exists(token_path):
+                    try:
+                        with open(token_path, "r") as f:
+                            t_cache = json.load(f)
+                        t_cache["access_token"] = res["access_token"]
+                        t_cache["refresh_token"] = res["refresh_token"]
+                        with open(token_path, "w") as f:
+                            json.dump(t_cache, f)
+                    except Exception: pass
+            except Exception:
+                pass
+        return page.session.store.get("onedrive_access_token") or ""
 
     async def load_drive_folders(parent_id):
         dlg_content.controls.clear()
@@ -51,11 +90,11 @@ def settings_view(page: ft.Page) -> ft.View:
         )
         page.update()
 
-        from services.drive_service import get_folders
-        token = page.session.store.get("drive_access_token")
+        from services.onedrive_service import get_folders
+        token = await _get_onedrive_token()
         if not token:
             dlg_content.controls.clear()
-            dlg_content.controls.append(ft.Text("Not authenticated with Google Drive."))
+            dlg_content.controls.append(ft.Text("Not authenticated. Please go back and Sign in with OneDrive."))
             page.update()
             return
 
@@ -63,16 +102,8 @@ def settings_view(page: ft.Page) -> ft.View:
             folders = await get_folders(token, parent_id)
         except Exception as e:
             if "UNAUTHENTICATED" in str(e):
-                import os
-                if os.path.exists(".token.json"):
-                    try:
-                        os.remove(".token.json")
-                    except Exception:
-                        pass
                 page.session.store.clear()
-                page.logout()
-                await page.push_route("/")
-                page.update()
+                page.go("/")
                 return
             else:
                 folders = []
@@ -119,7 +150,7 @@ def settings_view(page: ft.Page) -> ft.View:
         page.update()
 
     drive_dialog = ft.AlertDialog(
-        title=ft.Text("Select Google Drive Folder"),
+        title=ft.Text("Select OneDrive Folder"),
         content=dlg_content,
         actions=[
             ft.TextButton("Cancel", on_click=close_dialog),
@@ -138,6 +169,7 @@ def settings_view(page: ft.Page) -> ft.View:
         drive_dialog.open = True
         page.update()
         page.run_task(load_drive_folders, drive_history[-1])
+
 
     # ── Theme swatches ───────────────────────────────────────────────────────
     selected_color = current_theme
@@ -175,9 +207,6 @@ def settings_view(page: ft.Page) -> ft.View:
     update_color_selection()
 
     # ── Focusable button wrappers ────────────────────────────────────────────
-    # Each button gets a Container that shows a glowing border when focused via
-    # the remote control keyboard grid.
-
     _UNFOCUSED_BORDER = ft.Border(
         top=ft.BorderSide(2, "transparent"),
         bottom=ft.BorderSide(2, "transparent"),
@@ -194,7 +223,7 @@ def settings_view(page: ft.Page) -> ft.View:
         )
 
     _browse_inner = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.SEARCH, color="white"), ft.Text("Browse Drive", color="white", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
+        content=ft.Row([ft.Icon(ft.Icons.SEARCH, color="white"), ft.Text("Browse OneDrive", color="white", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
         bgcolor="#333333",
         height=56,
         border_radius=10,
@@ -243,7 +272,7 @@ def settings_view(page: ft.Page) -> ft.View:
         except Exception: pass
 
     _disconnect_inner = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.LOGOUT_ROUNDED, color="red"), ft.Text("Disconnect Google", color="red", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
+        content=ft.Row([ft.Icon(ft.Icons.LOGOUT_ROUNDED, color="red"), ft.Text("Disconnect OneDrive", color="red", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
         height=56,
         border_radius=10,
         border=ft.Border(
@@ -281,18 +310,15 @@ def settings_view(page: ft.Page) -> ft.View:
             return
         is_saving = True
 
-        raw_folder = folder_field.value.strip() if folder_field.value else ""
-        extracted_id = raw_folder
-        if "drive.google.com" in raw_folder and "folders/" in raw_folder:
-            extracted_id = raw_folder.split("folders/")[-1].split("?")[0].split("/")[0]
+        extracted_id = folder_field.value.strip() if folder_field.value else "root"
 
-        if extracted_id != page.session.store.get("drive_folder_id"):
+        if extracted_id != page.session.store.get("onedrive_folder_id"):
             for cache_key in ["home_cached_media_groups", "home_cached_folder_id", "home_cached_processed_items"]:
                 if page.session.store.contains_key(cache_key):
                     page.session.store.remove(cache_key)
 
         page.session.store.set("user_display_name", name_field.value)
-        page.session.store.set("drive_folder_id", extracted_id)
+        page.session.store.set("onedrive_folder_id", extracted_id)
         page.session.store.set("theme_color", selected_color)
 
         import json, os, tempfile
@@ -305,7 +331,7 @@ def settings_view(page: ft.Page) -> ft.View:
             except Exception: pass
 
         prefs["user_display_name"] = name_field.value
-        prefs["drive_folder_id"] = extracted_id
+        prefs["onedrive_folder_id"] = extracted_id
         prefs["theme_color"] = selected_color
 
         with open(prefs_path, "w") as f:
@@ -351,9 +377,9 @@ def settings_view(page: ft.Page) -> ft.View:
 
     disconnect_dialog = ft.AlertDialog(
         modal=True,
-        title=ft.Row([ft.Icon(ft.Icons.WARNING_ROUNDED, color="red"), ft.Text("Disconnect Account")]),
+        title=ft.Row([ft.Icon(ft.Icons.WARNING_ROUNDED, color="red"), ft.Text("Disconnect OneDrive")]),
         content=ft.Text(
-            "Are you sure you want to log out and disconnect your Google account from E-stream'o?"
+            "Are you sure you want to log out and disconnect your Microsoft account from E-stream'o?"
         ),
         actions=[
             ft.TextButton("Cancel", on_click=cancel_disconnect),
@@ -368,7 +394,6 @@ def settings_view(page: ft.Page) -> ft.View:
         disconnect_dialog.open = True
         page.update()
 
-    # Patch the disconnect button's on_click now that confirm_disconnect exists
     disconnect_wrap.on_click = confirm_disconnect
 
     # ── 2D Keyboard Focus Grid ───────────────────────────────────────────────
@@ -395,7 +420,6 @@ def settings_view(page: ft.Page) -> ft.View:
 
     async def update_settings_focus():
         """Apply / remove the focus indicator for every item in the grid."""
-        # Clear all button highlights and swatch borders first
         for btn_id, handler in _btn_focus_handlers.items():
             handler(False)
         for swatch in color_row.controls:
@@ -411,7 +435,6 @@ def settings_view(page: ft.Page) -> ft.View:
                 left=ft.BorderSide(3, "white"),
                 right=ft.BorderSide(3, "white"),
             )
-            # Pull native focus away from text fields
             try:
                 res = dummy_focus.focus()
                 if hasattr(res, "__await__"):
@@ -420,7 +443,6 @@ def settings_view(page: ft.Page) -> ft.View:
         elif id(target) in _btn_focus_handlers:
             # One of our wrapped buttons
             _btn_focus_handlers[id(target)](True)
-            # Pull native focus away from text fields
             try:
                 res = dummy_focus.focus()
                 if hasattr(res, "__await__"):
@@ -555,9 +577,9 @@ def settings_view(page: ft.Page) -> ft.View:
                 content=ft.Column([
                     ft.Row([
                         ft.Icon(ft.Icons.STORAGE, color=ft.Colors.PRIMARY),
-                        ft.Text("Data Source", size=20, weight=ft.FontWeight.BOLD),
+                        ft.Text("OneDrive Source Folder", size=20, weight=ft.FontWeight.BOLD),
                     ]),
-                    ft.Text("Select the root folder containing your media.", color="gray"),
+                    ft.Text("Select the root folder in OneDrive containing your media library.", color="gray"),
                     ft.Divider(height=10, color="transparent"),
                     ft.Row(controls=[folder_field, browse_wrap]),
                 ]),

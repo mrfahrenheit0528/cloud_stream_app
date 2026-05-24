@@ -7,14 +7,22 @@ except ImportError:
     except ImportError:
         fv = None
 
+import os
+
 def viewer_view(page: ft.Page, file_name: str) -> ft.View:
     """Full-screen media player overlay (Route: "/viewer/:file_name")"""
     
     # Retrieve the metadata we passed from the home view
     item_data = page.session.store.get("current_media")
-    token = page.session.store.get("drive_access_token")
+    if not item_data:
+        # Flet hot-reloaded or the app was restarted while viewing a media file, wiping the session.
+        def redirect(e): page.go("/home")
+        page.run_task(redirect)
+        return ft.View(f"/viewer/{file_name}", [ft.Text("Restoring session...")], bgcolor="black")
     
-    if not item_data or not token:
+    token = page.session.store.get("onedrive_access_token")
+    
+    if not token:
         return ft.View(
             route=f"/viewer/{file_name}",
             bgcolor="black",
@@ -23,7 +31,10 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         )
         
     mime_type = item_data.get("mimeType", "")
-    stream_url = f"https://www.googleapis.com/drive/v3/files/{item_data['id']}?alt=media"
+    
+    # Follow HTTP redirects in Python first to give the player a raw CDN stream URL
+    from services.onedrive_service import get_direct_stream_url_sync
+    stream_url = get_direct_stream_url_sync(item_data.get("stream_url", ""))
     
     # Base layout configurations
     category = item_data.get("category", file_name)
@@ -70,9 +81,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         def update_gallery(idx):
             state["idx"] = idx
             current = photo_list[idx]
-            hr_url = current.get("url", f"https://www.googleapis.com/drive/v3/files/{current['id']}?alt=media")
-            if hr_url and "=" in hr_url:
-                hr_url = hr_url.rsplit("=", 1)[0] + "=s0"
+            from services.onedrive_service import get_direct_stream_url_sync
+            hr_url = get_direct_stream_url_sync(current.get("stream_url", ""))
             
             img_control.src = hr_url
             appbar_title.value = current["name"]
@@ -114,15 +124,32 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         page.session.store.set("keyboard_handler", viewer_keyboard)
         
     # --- CUSTOM AUDIO PLAYER ---
-    elif "audio/" in mime_type and fv:
+    elif "audio/" in mime_type:
         audio_state = page.session.store.get("audio_state")
         
+        def resolve_cover_url(url, stream_url=""):
+            """Resolve a track's thumbnail URL. Returns 'Logo.png' as fallback."""
+            if not url:
+                return "Logo.png"
+            if not url.startswith("http") and not os.path.isabs(url):
+                return "Logo.png"
+            # OneDrive thumbnail service URL → valid image, use as-is
+            if "mediap.svc.ms" in url or "microsoftpersonalcontent.com" in url:
+                return url
+            # Google Drive image URL → force high-res
+            if "googleusercontent.com" in url and "=" in url:
+                return url.rsplit("=", 1)[0] + "=s1080"
+            # Reject if url points to an audio file itself
+            from urllib.parse import urlparse
+            path = urlparse(url).path.lower()
+            if any(path.endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma"]):
+                return "Logo.png"
+            if url == stream_url:
+                return "Logo.png"
+            return url
+        
         # Left Pane: Controls
-        cover_url = item_data.get("url", "")
-        if cover_url and "=" in cover_url:
-            cover_url = cover_url.rsplit("=", 1)[0] + "=s1080"
-        if not cover_url:
-            cover_url = "https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=1000&auto=format&fit=crop"
+        cover_url = resolve_cover_url(item_data.get("url", ""), item_data.get("stream_url", ""))
             
         cover_img = ft.Image(src=cover_url, width=280, height=280, fit="cover", border_radius=20)
         title_text = ft.Text(item_data['name'], size=24, weight=ft.FontWeight.W_900, color="white", text_align=ft.TextAlign.CENTER, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)
@@ -149,7 +176,7 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             btn.on_click = on_click
             return btn
             
-        play_btn = build_transport_btn(ft.Icons.PAUSE_CIRCLE_FILLED_ROUNDED if audio_state and audio_state.is_playing else ft.Icons.PLAY_CIRCLE_FILLED_ROUNDED, 70, "white")
+        play_btn = build_transport_btn(ft.Icons.PAUSE_CIRCLE_FILLED if audio_state and audio_state.is_playing else ft.Icons.PLAY_CIRCLE_FILLED, 70, "white")
         shuffle_btn = build_transport_btn(ft.Icons.SHUFFLE, 24, page.theme.color_scheme_seed if audio_state and audio_state.is_shuffled else "white54")
         
         # Build a composite 'Loop One' icon to completely bypass missing font glyphs
@@ -163,7 +190,9 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         loop_btn = build_transport_btn(loop_stack, 24, "white54")
         
         def on_toggle(e): 
-            if audio_state: page.run_task(audio_state.toggle_play)
+            if audio_state: 
+                page.run_task(audio_state.toggle_play)
+            else:
         def on_prev(e): 
             if audio_state: page.run_task(audio_state.prev)
         def on_next(e): 
@@ -225,7 +254,7 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         left_pane = ft.Container(
             expand=7,
             content=ft.Column([
-                ft.Container(content=cover_img, shadow=ft.BoxShadow(spread_radius=5, blur_radius=30, color=ft.Colors.BLACK87)),
+                ft.Container(content=cover_img, width=280, height=280, shadow=ft.BoxShadow(spread_radius=5, blur_radius=30, color=ft.Colors.BLACK87)),
                 ft.Container(height=30),
                 title_text,
                 ft.Container(height=20),
@@ -253,15 +282,17 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             
             track = audio_state.queue[audio_state.current_index]
             
-            cover = track.get('url')
-            if cover and "=" in cover: cover = cover.rsplit("=", 1)[0] + "=s1080"
-            if not cover: cover = "https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=1000&auto=format&fit=crop"
+            cover = resolve_cover_url(track.get('url', ''), track.get('stream_url', ''))
+            
+            # Update current_media in session so the back button / viewer rebuild stays correct
+            page.session.store.set("current_media", track)
             
             cover_img.src = cover
-            if "bg_img" in focus_state: focus_state["bg_img"].src = cover
+            if "bg_img" in focus_state:
+                focus_state["bg_img"].src = cover
             title_text.value = track['name']
             
-            play_btn.icon_control.name = ft.Icons.PAUSE_CIRCLE_FILLED_ROUNDED if audio_state.is_playing else ft.Icons.PLAY_CIRCLE_FILLED_ROUNDED
+            play_btn.icon_control.icon = ft.Icons.PAUSE_CIRCLE_FILLED if audio_state.is_playing else ft.Icons.PLAY_CIRCLE_FILLED
             shuffle_btn.icon_control.color = page.theme.color_scheme_seed if audio_state.is_shuffled else "white54"
             
             if audio_state.loop_mode == 0:
@@ -274,10 +305,18 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                 loop_base_icon.color = page.theme.color_scheme_seed
                 loop_one_text.visible = True
             
-            try: 
-                loop_base_icon.update()
-                loop_one_text.update()
-            except: pass
+            def safe_update(ctrl):
+                try: ctrl.update()
+                except: pass
+                
+            safe_update(loop_base_icon)
+            safe_update(loop_one_text)
+            safe_update(cover_img)
+            safe_update(title_text)
+            safe_update(play_btn.icon_control)
+            safe_update(shuffle_btn.icon_control)
+            if "bg_img" in focus_state:
+                safe_update(focus_state["bg_img"])
             
             # Rebuild queue list
             queue_col.controls.clear()
@@ -324,7 +363,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         video_engine = fv.Video(
             playlist=[fv.VideoMedia(
                 stream_url,
-                http_headers={"Authorization": f"Bearer {token}"},
                 extras={
                     "cache": "yes",
                     "demuxer-max-bytes": "1000000000",

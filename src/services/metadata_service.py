@@ -19,30 +19,36 @@ if not os.path.exists(CACHE_DIR):
 # we limit concurrent ID3 parsing downloads to 5 at a time.
 download_semaphore = asyncio.Semaphore(5)
 
-async def _download_partial_file(file_id: str, token: str, chunk_size: int = 512000) -> bytes:
-    """Downloads the first chunk_size bytes of a file from Google Drive."""
-    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
-    req = urllib.request.Request(url)
-    req.add_header('Authorization', f'Bearer {token}')
+async def _download_partial_file(stream_url: str, chunk_size: int = 512000) -> bytes:
+    """Downloads the first chunk_size bytes of a file from OneDrive."""
+    if not stream_url:
+        return None
+        
+    # Resolve the redirect to a direct CDN stream first!
+    from services.onedrive_service import get_direct_stream_url_sync
+    resolved_url = get_direct_stream_url_sync(stream_url)
+    
+    req = urllib.request.Request(resolved_url)
     req.add_header('Range', f'bytes=0-{chunk_size}')
+    req.add_header('User-Agent', 'Mozilla/5.0')
     
     def fetch():
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=8) as response:
                 return response.read()
         except HTTPError as e:
-            # 206 Partial Content is actually a success for Range requests!
-            if e.code == 206:
+            # 206 Partial Content or 200 OK are both accepted
+            if e.code in (200, 206):
                 return e.read()
-            print(f"Failed to fetch partial file {file_id}: {e.code}")
+            print(f"Failed to fetch partial file: {e.code}")
             return None
         except Exception as e:
-            print(f"Error fetching partial file {file_id}: {e}")
+            print(f"Error fetching partial file: {e}")
             return None
             
     return await asyncio.to_thread(fetch)
 
-async def get_audio_metadata(file_id: str, token: str, original_filename: str):
+async def get_audio_metadata(stream_url: str, file_id: str, original_filename: str):
     """
     Checks the local cache for the file's ID3 metadata and album art.
     If not found, downloads the first 500KB of the file, parses the ID3 tags,
@@ -70,8 +76,7 @@ async def get_audio_metadata(file_id: str, token: str, original_filename: str):
 
     # 2. Not cached. We must download and parse it.
     async with download_semaphore:
-        print(f"Downloading ID3 chunk for {original_filename}...")
-        file_bytes = await _download_partial_file(file_id, token)
+        file_bytes = await _download_partial_file(stream_url)
         
         if not file_bytes:
             return {"title": original_filename, "cover_path": None}

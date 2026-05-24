@@ -73,13 +73,15 @@ class GlobalAudioState:
             
         self.current_index = index
         track = self.queue[index]
-        stream_url = f"https://www.googleapis.com/drive/v3/files/{track['id']}?alt=media"
-        token = self.page.session.store.get("drive_access_token")
+        raw_url = track.get("stream_url", "")
         
-        if fv and token:
+        if fv and raw_url:
+            # Resolve Microsoft's 302 redirect to a raw CDN stream URL asynchronously
+            from services.onedrive_service import get_direct_stream_url
+            stream_url = await get_direct_stream_url(raw_url)
+            
             media = fv.VideoMedia(
                 stream_url,
-                http_headers={"Authorization": f"Bearer {token}"},
                 extras={"cache": "yes", "hwdec": "auto"}
             )
             
@@ -91,7 +93,7 @@ class GlobalAudioState:
             
             self.engine = fv.Video(
                 playlist=[media],
-                width=0, height=0, opacity=0.01, autoplay=True, visible=True, show_controls=False
+                width=0, height=0, opacity=0.0, autoplay=True, visible=True, show_controls=False
             )
             self.page.overlay.append(self.engine)
             self.page.update()
@@ -101,20 +103,30 @@ class GlobalAudioState:
             self.dur_ms = 0
             self.stuck_count = 0
             self.is_playing = True
+            
+            # Important: Update the session current_media so next/prev works without data loss!
+            self.page.session.store.set("current_media", track)
+            
             self.notify_ui()
         
     async def toggle_play(self):
         if self.is_playing:
             self.engine.autoplay = False
-            try: await self.engine.pause()
-            except: pass
+            try:
+                res = self.engine.pause()
+                if asyncio.iscoroutine(res): 
+                    await res
+            except Exception as ex:
             try: self.engine.update()
             except: pass
             self.is_playing = False
         else:
             self.engine.autoplay = True
-            try: await self.engine.play()
-            except: pass
+            try:
+                res = self.engine.play()
+                if asyncio.iscoroutine(res): 
+                    await res
+            except Exception as ex:
             try: self.engine.update()
             except: pass
             self.is_playing = True
@@ -122,7 +134,9 @@ class GlobalAudioState:
         
     async def stop_audio(self):
         self.engine.autoplay = False
-        try: await self.engine.pause()
+        try:
+            res = self.engine.pause()
+            if asyncio.iscoroutine(res): await res
         except: pass
         try: self.engine.update()
         except: pass
@@ -137,7 +151,9 @@ class GlobalAudioState:
         elif self.loop_mode == 1 and self.queue: # Loop Queue
             await self.play_index(0)
         else:
-            try: await self.engine.pause()
+            try:
+                res = self.engine.pause()
+                if asyncio.iscoroutine(res): await res
             except: pass
             self.is_playing = False
             self.pos_ms = 0
@@ -145,7 +161,9 @@ class GlobalAudioState:
             
     async def prev(self):
         if self.pos_ms > 3000:
-            try: await self.engine.seek(0)
+            try:
+                res = self.engine.seek(0)
+                if asyncio.iscoroutine(res): await res
             except: pass
             self.pos_ms = 0
         else:
@@ -154,9 +172,6 @@ class GlobalAudioState:
         self.notify_ui()
         
     def add_to_queue(self, track):
-        # Add a song without duplicate check if we want to allow same song twice, 
-        # but to keep it simple we avoid dupes or identify them.
-        # Actually duplicate song IDs in the list can break index lookup later, so only add if not present.
         if not any(t['id'] == track['id'] for t in self.queue):
             self.queue.append(track)
             if not self.is_shuffled:

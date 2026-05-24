@@ -1,346 +1,262 @@
 import flet as ft
-import webbrowser
-from services.google_auth import get_google_provider, GOOGLE_SCOPES
-
-# Shown in the OAuth callback tab after the user signs in.
-_COMPLETE_PAGE_HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Signed in to E-stream'o</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: #111;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-    }
-    .card { text-align: center; padding: 40px; }
-    .icon { font-size: 56px; margin-bottom: 16px; }
-    h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
-    p  { color: #aaa; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">✓</div>
-    <h1>Signed in!</h1>
-    <p>You can close this tab and return to E-stream'o.</p>
-  </div>
-  <script>
-    setTimeout(function() { window.close(); }, 1800);
-  </script>
-</body>
-</html>
-"""
-
+import os
+import tempfile
+import json
+from services.onedrive_auth import initiate_device_flow, poll_device_token, fetch_user_profile
 
 def login_view(page: ft.Page) -> ft.View:
-    """The initial landing screen (Route: "/")"""
-
-    provider = get_google_provider()
     current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     async def on_login_click(e):
-        await page.login(
-            provider,
-            scope=GOOGLE_SCOPES,
-            complete_page_html=_COMPLETE_PAGE_HTML,
+        # Reset the button state visually
+        btn = e.control
+        btn.disabled = True
+        btn.content = ft.Row(
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[ft.ProgressRing(width=22, height=22, color="white", stroke_width=2.5)]
         )
+        page.update()
 
-    # Google misconfiguration error screen
-    if "state=" in page.route and "code=" in page.route:
-        return ft.View(
-            route="/",
-            bgcolor="#0A0A0A",
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            vertical_alignment=ft.MainAxisAlignment.CENTER,
-            controls=[
-                ft.Icon(ft.Icons.ERROR_OUTLINE, size=80, color="red"),
-                ft.Text("Google Console Misconfigured!", size=24, weight=ft.FontWeight.BOLD, color="red"),
-                ft.Text(
-                    "You must update your 'Authorised redirect URIs' in Google Cloud Console.\n"
-                    "It is currently pointing to the app root, but it MUST point exactly to:\n\n"
-                    "http://localhost:8550/oauth_callback",
+        try:
+            # Step 1: Get the device code from Microsoft
+            device_info = await initiate_device_flow()
+
+            user_code = device_info.get("user_code", "")
+            verify_url = device_info.get("verification_url", "https://microsoft.com/devicelogin")
+            device_code = device_info.get("device_code", "")
+            interval = device_info.get("interval", 5)
+
+            # QR code pointing to microsoft.com/devicelogin for quick phone scanning
+            qr_src = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={verify_url}&bgcolor=111111&color=ffffff&margin=2"
+
+            # Step 2: Show the classic TV sign-in dialog
+            dialog = ft.AlertDialog(
+                title=ft.Text(
+                    "Sign in with OneDrive",
+                    weight=ft.FontWeight.BOLD,
                     text_align=ft.TextAlign.CENTER,
-                    color="white",
+                    size=20,
                 ),
-            ],
-        )
-
-    # ── Background: deep radial glow behind the card ─────────────────────────
-    bg_glow = ft.Container(
-        expand=True,
-        gradient=ft.RadialGradient(
-            center=ft.Alignment(0, -0.3),
-            radius=1.1,
-            colors=["#1A0A1E", "#0A0A0A"],
-        ),
-    )
-
-    # ── Google "G" logo built from text (no external assets needed) ──────────
-    google_g = ft.Container(
-        width=22,
-        height=22,
-        bgcolor="white",
-        border_radius=11,
-        alignment=ft.Alignment(0, 0),
-        content=ft.Text(
-            "G",
-            size=14,
-            weight=ft.FontWeight.BOLD,
-            color="#DB4437",
-        ),
-    )
-
-    # ── Sign-in button state (hover glow) ────────────────────────────────────
-    sign_in_container = ft.Container(
-        border_radius=30,
-        animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
-        shadow=ft.BoxShadow(
-            spread_radius=0,
-            blur_radius=0,
-            color="#00000000",
-            offset=ft.Offset(0, 4),
-        ),
-        content=ft.ElevatedButton(
-            content=ft.Row(
-                controls=[
-                    google_g,
-                    ft.Container(width=10),
-                    ft.Text(
-                        "Sign in with Google",
-                        size=16,
-                        weight=ft.FontWeight.W_600,
-                        color="white",
-                    ),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-                tight=True,
-            ),
-            style=ft.ButtonStyle(
-                bgcolor={
-                    ft.ControlState.DEFAULT: current_theme,
-                    ft.ControlState.HOVERED: ft.Colors.with_opacity(0.85, current_theme),
-                },
-                shape=ft.RoundedRectangleBorder(radius=30),
-                padding=ft.Padding(left=32, top=18, right=36, bottom=18),
-                elevation=8,
-                shadow_color=ft.Colors.with_opacity(0.4, current_theme),
-                overlay_color=ft.Colors.with_opacity(0.08, "white"),
-            ),
-            on_click=on_login_click,
-        ),
-    )
-
-    def on_btn_hover(e):
-        if e.data == "true":
-            sign_in_container.shadow = ft.BoxShadow(
-                spread_radius=2,
-                blur_radius=28,
-                color=ft.Colors.with_opacity(0.55, current_theme),
-                offset=ft.Offset(0, 4),
-            )
-        else:
-            sign_in_container.shadow = ft.BoxShadow(
-                spread_radius=0,
-                blur_radius=0,
-                color="#00000000",
-                offset=ft.Offset(0, 4),
-            )
-        sign_in_container.update()
-
-    sign_in_container.content.on_hover = on_btn_hover
-
-    # ── Feature pills ─────────────────────────────────────────────────────────
-    def feature_pill(icon, label):
-        return ft.Container(
-            content=ft.Row(
-                controls=[
-                    ft.Icon(icon, size=14, color=ft.Colors.with_opacity(0.7, current_theme)),
-                    ft.Text(label, size=12, color="#888888"),
-                ],
-                spacing=6,
-                tight=True,
-            ),
-            bgcolor="#1A1A1A",
-            border_radius=20,
-            padding=ft.Padding(left=12, top=6, right=14, bottom=6),
-        )
-
-    # ── Glassmorphism card ────────────────────────────────────────────────────
-    card = ft.Container(
-        width=460,
-        padding=ft.Padding(left=52, top=56, right=52, bottom=48),
-        border_radius=28,
-        bgcolor=ft.Colors.with_opacity(0.06, "white"),
-        border=ft.Border(
-            top=ft.BorderSide(1, ft.Colors.with_opacity(0.12, "white")),
-            bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.04, "white")),
-            left=ft.BorderSide(1, ft.Colors.with_opacity(0.10, "white")),
-            right=ft.BorderSide(1, ft.Colors.with_opacity(0.04, "white")),
-        ),
-        shadow=ft.BoxShadow(
-            spread_radius=-4,
-            blur_radius=60,
-            color=ft.Colors.with_opacity(0.6, "#000000"),
-            offset=ft.Offset(0, 24),
-        ),
-        content=ft.Column(
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=0,
-            tight=True,
-            controls=[
-                # App icon with glow ring
-                ft.Stack(
-                    width=96,
-                    height=96,
-                    controls=[
-                        ft.Container(
-                            width=96,
-                            height=96,
-                            border_radius=48,
-                            gradient=ft.RadialGradient(
-                                center=ft.Alignment(0, 0),
-                                radius=0.9,
-                                colors=[
-                                    ft.Colors.with_opacity(0.35, current_theme),
-                                    ft.Colors.with_opacity(0.0, current_theme),
-                                ],
+                content=ft.Column([
+                    # Two-column layout: instructions + QR code
+                    ft.Row([
+                        ft.Column([
+                            ft.Text(
+                                "On your phone or computer:",
+                                color=ft.Colors.WHITE70,
+                                size=13,
+                                weight=ft.FontWeight.W_500,
                             ),
-                        ),
-                        ft.Container(
-                            width=96,
-                            height=96,
-                            alignment=ft.Alignment(0, 0),
-                            content=ft.Icon(
-                                ft.Icons.CLOUD_DONE_ROUNDED,
-                                size=52,
-                                color=current_theme,
+                            ft.Container(
+                                bgcolor="#1A1A2E",
+                                border_radius=8,
+                                padding=ft.Padding(left=14, top=8, right=14, bottom=8),
+                                content=ft.Text(
+                                    verify_url,
+                                    size=18,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=current_theme,
+                                ),
                             ),
+                            ft.Text(
+                                "Then enter this code:",
+                                color=ft.Colors.WHITE70,
+                                size=13,
+                                weight=ft.FontWeight.W_500,
+                            ),
+                            ft.Container(
+                                bgcolor="#0D0D1A",
+                                border_radius=10,
+                                border=ft.Border.all(2, current_theme),
+                                padding=ft.Padding(left=20, top=12, right=20, bottom=12),
+                                content=ft.Text(
+                                    user_code,
+                                    size=44,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="white",
+                                    text_align=ft.TextAlign.CENTER,
+                                    font_family="monospace",
+                                ),
+                            ),
+                        ],
+                        spacing=10,
+                        expand=True,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                    ],
-                ),
-
-                ft.Container(height=24),
-
-                # App name
-                ft.Text(
-                    "E-stream'o",
-                    size=40,
-                    weight=ft.FontWeight.W_900,
-                    color="white",
-                    text_align=ft.TextAlign.CENTER,
-                ),
-
-                ft.Container(height=8),
-
-                # Tagline
-                ft.Text(
-                    "Your personal high-performance streaming server.",
-                    size=14,
-                    color="#888888",
-                    text_align=ft.TextAlign.CENTER,
-                    weight=ft.FontWeight.W_400,
-                ),
-
-                ft.Container(height=32),
-
-                # Feature pills row
-                ft.Row(
-                    controls=[
-                        feature_pill(ft.Icons.MOVIE_FILTER_ROUNDED, "Videos"),
-                        feature_pill(ft.Icons.PHOTO_LIBRARY_ROUNDED, "Photos"),
-                        feature_pill(ft.Icons.MUSIC_NOTE_ROUNDED, "Music"),
+                        ft.Column([
+                            ft.Text("Scan QR:", color=ft.Colors.WHITE54, size=12),
+                            ft.Container(
+                                bgcolor="#ffffff",
+                                border_radius=8,
+                                padding=4,
+                                content=ft.Image(
+                                    src=qr_src,
+                                    width=140, height=140,
+                                    fit=ft.BoxFit.CONTAIN,
+                                ),
+                            ),
+                        ],
+                        spacing=6,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
                     ],
                     alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=8,
+                    spacing=20,
+                    ),
+                    ft.Divider(color="#2A2A3E", height=1),
+                    ft.Row([
+                        ft.ProgressRing(width=16, height=16, color=current_theme, stroke_width=2),
+                        ft.Text(
+                            "  Waiting for you to sign in...",
+                            color=ft.Colors.WHITE54,
+                            size=13,
+                            italic=True,
+                        )
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                ],
+                tight=True,
+                spacing=14,
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
+                modal=True,
+            )
+            page.overlay.append(dialog)
+            dialog.open = True
+            page.update()
 
-                ft.Container(height=36),
+            # Step 3: Poll Microsoft in the background until approved
+            token_result = await poll_device_token(device_code, interval)
 
-                # Sign-in button
-                sign_in_container,
+            dialog.open = False
+            page.update()
 
-                ft.Container(height=24),
+            # Step 4: Fetch the user's profile info
+            user_info = await fetch_user_profile(token_result["access_token"])
+            display_name = user_info.get("given_name", "User")
+            picture_url = user_info.get("picture", "")
 
-                # Privacy note
-                ft.Text(
-                    "We only read your Drive files. Nothing is shared.",
-                    size=11,
-                    color="#555555",
-                    text_align=ft.TextAlign.CENTER,
+            # Step 5: Persist token to disk for speed loading
+            token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+            with open(token_cache_path, "w") as f:
+                json.dump({
+                    "access_token": token_result["access_token"],
+                    "refresh_token": token_result.get("refresh_token", ""),
+                    "given_name": display_name,
+                    "picture_url": picture_url,
+                }, f)
+
+            # Store in session state
+            page.session.store.set("onedrive_access_token", token_result["access_token"])
+            page.session.store.set("onedrive_refresh_token", token_result.get("refresh_token", ""))
+            page.session.store.set("user_display_name", display_name)
+            page.session.store.set("user_picture_url", picture_url)
+
+            # Also write to standard persistent preferences so it survives app restarts
+            prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+            prefs = {}
+            if os.path.exists(prefs_path):
+                try:
+                    with open(prefs_path, "r") as f:
+                        prefs = json.load(f)
+                except Exception:
+                    pass
+            prefs["onedrive_refresh_token"] = token_result.get("refresh_token", "")
+            prefs["user_display_name"] = display_name
+            try:
+                with open(prefs_path, "w") as f:
+                    json.dump(prefs, f)
+            except Exception:
+                pass
+
+            page.go("/home")
+
+        except Exception as ex:
+            btn.disabled = False
+            btn.content = ft.Row(
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        bgcolor="white", border_radius=12, width=24, height=24,
+                        alignment=ft.Alignment(0, 0),
+                        content=ft.Text("M", color=current_theme, weight=ft.FontWeight.BOLD, size=16)
+                    ),
+                    ft.Text("Sign in with OneDrive", size=18, weight=ft.FontWeight.W_600, color="white")
+                ]
+            )
+            snack = ft.SnackBar(ft.Text(str(ex), color="white"), bgcolor="red")
+            page.overlay.append(snack)
+            snack.open = True
+            page.update()
+
+    # The sign-in button — use ft.Button so it is natively D-pad focusable
+    signin_btn = ft.Button(
+        autofocus=True,
+        style=ft.ButtonStyle(
+            bgcolor=current_theme,
+            color="white",
+            shape=ft.RoundedRectangleBorder(radius=30),
+            padding=ft.Padding(left=40, top=18, right=40, bottom=18),
+            overlay_color=ft.Colors.with_opacity(0.15, "white"),
+            elevation=4,
+        ),
+        on_click=on_login_click,
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                ft.Container(
+                    bgcolor="white",
+                    border_radius=12,
+                    width=24, height=24,
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Text("M", color=current_theme, weight=ft.FontWeight.BOLD, size=16)
                 ),
-            ],
+                ft.Text("Sign in with OneDrive", size=18, weight=ft.FontWeight.W_600, color="white")
+            ]
         ),
     )
 
-    # ── Decorative floating blobs behind the card ─────────────────────────────
-    blob_tl = ft.Container(
-        width=320,
-        height=320,
-        border_radius=160,
-        left=-80,
-        top=-80,
-        gradient=ft.RadialGradient(
-            center=ft.Alignment(0, 0),
-            radius=0.8,
-            colors=[
-                ft.Colors.with_opacity(0.12, current_theme),
-                ft.Colors.with_opacity(0.0, current_theme),
-            ],
-        ),
-    )
-    blob_br = ft.Container(
-        width=280,
-        height=280,
-        border_radius=140,
-        right=-60,
-        bottom=-60,
-        gradient=ft.RadialGradient(
-            center=ft.Alignment(0, 0),
-            radius=0.8,
-            colors=[
-                ft.Colors.with_opacity(0.10, "#7C3AED"),
-                ft.Colors.with_opacity(0.0, "#7C3AED"),
-            ],
-        ),
-    )
-
-    login_stack = ft.Stack(
+    content = ft.Container(
         expand=True,
-        controls=[
-            # Layer 0: gradient background
-            bg_glow,
-            # Layer 1: decorative blobs
-            blob_tl,
-            blob_br,
-            # Layer 2: centered card
-            ft.Container(
-                expand=True,
-                alignment=ft.Alignment(0, 0),
-                content=card,
-            ),
-            # Layer 3: version watermark bottom-right
-            ft.Container(
-                right=20,
-                bottom=16,
-                content=ft.Text(
-                    "E-stream'o  ·  v1.0",
-                    size=11,
-                    color="#333333",
+        bgcolor="#111111",
+        alignment=ft.Alignment(0, 0),
+        content=ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=40,
+            controls=[
+                ft.Container(
+                    bgcolor=current_theme,
+                    width=120, height=120,
+                    border_radius=60,
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Icon(ft.Icons.CLOUD_DONE_ROUNDED, size=60, color="white")
                 ),
-            ),
-        ],
+                ft.Column(
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=10,
+                    controls=[
+                        ft.Text("E-stream'o", size=48, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text("Your personal high-performance streaming server.", size=16, color="#888888")
+                    ]
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=20,
+                    controls=[
+                        ft.Chip(label=ft.Text("Videos"), leading=ft.Icon(ft.Icons.MOVIE, color=current_theme), bgcolor="#1A1A1A"),
+                        ft.Chip(label=ft.Text("Photos"), leading=ft.Icon(ft.Icons.PHOTO_LIBRARY, color=current_theme), bgcolor="#1A1A1A"),
+                        ft.Chip(label=ft.Text("Music"), leading=ft.Icon(ft.Icons.MUSIC_NOTE, color=current_theme), bgcolor="#1A1A1A"),
+                    ]
+                ),
+                signin_btn,
+                ft.Text("We only read your OneDrive files. Nothing is shared.", size=12, color="#555555")
+            ]
+        )
     )
 
     return ft.View(
         route="/",
-        bgcolor="#0A0A0A",
-        padding=0,
-        controls=[login_stack],
+        controls=[content],
+        padding=0
     )

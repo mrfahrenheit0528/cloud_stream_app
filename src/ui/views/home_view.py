@@ -225,7 +225,7 @@ def home_view(page: ft.Page) -> ft.View:
                     hero_opacity = 0.5
                 else:
                     # Fallback to default cinematic background if media has no thumbnail
-                    img_url = default_bg
+                    img_url = "Logo.png"
                     hero_opacity = 0.4
                 
                 hero_image.src = img_url
@@ -233,15 +233,15 @@ def home_view(page: ft.Page) -> ft.View:
                 
                 if data.get("is_audio"):
                     hero_subtitle.value = "Audio • High Quality"
-                    hero_play_container.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
+                    hero_play_container.content.controls[0].icon = ft.Icons.PLAY_ARROW_ROUNDED
                     hero_play_container.content.controls[1].value = "Play Media"
                 elif "video/" in data.get("mimeType", ""):
                     hero_subtitle.value = "Video • Ready to Stream"
-                    hero_play_container.content.controls[0].name = ft.Icons.PLAY_ARROW_ROUNDED
+                    hero_play_container.content.controls[0].icon = ft.Icons.PLAY_ARROW_ROUNDED
                     hero_play_container.content.controls[1].value = "Play Media"
                 else:
                     hero_subtitle.value = "Photo • View Fullscreen"
-                    hero_play_container.content.controls[0].name = ft.Icons.IMAGE
+                    hero_play_container.content.controls[0].icon = ft.Icons.IMAGE
                     hero_play_container.content.controls[1].value = "View Image"
                     
                 hero_play_btn.visible = True
@@ -468,9 +468,9 @@ def home_view(page: ft.Page) -> ft.View:
             safe_update()
         except RuntimeError: return
         
-        from services.drive_service import get_media
-        token = page.session.store.get("drive_access_token")
-        folder_id = page.session.store.get("drive_folder_id")
+        from services.onedrive_service import get_media
+        token = page.session.store.get("onedrive_access_token")
+        folder_id = page.session.store.get("onedrive_folder_id")
         
         if not token:
             shelf_container.controls.clear()
@@ -488,7 +488,7 @@ def home_view(page: ft.Page) -> ft.View:
                     content=ft.Column([
                         ft.Icon(ft.Icons.FOLDER_OFF, size=48, color="gray"),
                         ft.Text("No folder selected.", size=18, color="white"),
-                        ft.Text("Please go to Settings and browse for your Google Drive folder.", color="gray")
+                        ft.Text("Please go to Settings and browse for your OneDrive folder.", color="gray")
                     ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
                 )
             )
@@ -545,9 +545,6 @@ def home_view(page: ft.Page) -> ft.View:
                 w = m["videoMediaMetadata"].get("width", 0)
                 h = m["videoMediaMetadata"].get("height", 0)
             return w, h
-
-        from services.metadata_service import get_audio_metadata
-        
         cached_processed_dict = page.session.store.get("home_cached_processed_items") or {}
         new_processed_dict = {}
 
@@ -565,11 +562,24 @@ def home_view(page: ft.Page) -> ft.View:
                 thumb_url = m.get("thumbnailLink", "")
                 
                 if is_audio:
-                    metadata = await get_audio_metadata(m["id"], token, m["name"])
-                    if metadata.get("title"):
-                        name = metadata["title"]
-                    if metadata.get("cover_path"):
-                        thumb_url = metadata["cover_path"]
+                    from services.metadata_service import get_audio_metadata
+                    audio_meta = m.get("audio", {})
+                    if audio_meta and audio_meta.get("title"):
+                        artist = audio_meta.get("artist", "")
+                        if artist:
+                            name = f"{artist} - {audio_meta['title']}"
+                        else:
+                            name = audio_meta["title"]
+                            
+                    # ALWAYS extract ID3 tags to get the local cover art, because
+                    # OneDrive's mediap.svc.ms thumbnail URLs frequently expire/fail in Flet
+                    meta = await get_audio_metadata(m.get("url", ""), m["id"], name)
+                    if meta.get("title") and meta.get("title") != name and name == m["name"]:
+                        name = meta["title"]
+                    if meta.get("cover_path"):
+                        thumb_url = meta["cover_path"]
+                    elif "mediap.svc.ms" in thumb_url or "microsoftpersonalcontent.com" in thumb_url:
+                        thumb_url = ""
                         
                 cat = "Music" if is_audio else ("Photos" if "image/" in m.get("mimeType", "") else "Videos") if folder_name == "Root" else folder_name
                 
@@ -578,6 +588,7 @@ def home_view(page: ft.Page) -> ft.View:
                     "mimeType": m["mimeType"], 
                     "name": name, 
                     "url": thumb_url, 
+                    "stream_url": m.get("url", ""), # Store the OneDrive direct stream link here!
                     "width": w, 
                     "height": h,
                     "is_audio": is_audio,
