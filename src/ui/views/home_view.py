@@ -1,6 +1,13 @@
 import asyncio
 import flet as ft
 from datetime import datetime
+import os
+import json
+
+# Throttle background ID3 extraction to avoid flooding the TV's CPU/network
+_cover_semaphore = asyncio.Semaphore(2)
+# Global cooldown to prevent repeated hero-banner refreshes while navigating fast
+_hero_debounce_task = None
 
 def home_view(page: ft.Page) -> ft.View:
     """The main dashboard screen (Route: "/home")"""
@@ -26,7 +33,7 @@ def home_view(page: ft.Page) -> ft.View:
         user_name = page.session.store.get("user_given_name")
         
     # Get profile picture URL
-    profile_pic = page.session.store.get("profile_pic_url")
+    profile_pic = page.session.store.get("user_picture_url") or page.session.store.get("profile_pic_url")
 
     # Remove the hardcoded mock database
     # We will populate the shelves dynamically via the drive_service.
@@ -55,67 +62,14 @@ def home_view(page: ft.Page) -> ft.View:
     )
     
     hero_title = ft.Text(
-        "E-stream'o", size=54, weight=ft.FontWeight.W_900, color="white", max_lines=2, 
+        "E-stream'o", size=36, weight=ft.FontWeight.W_900, color="white", max_lines=2, 
         overflow=ft.TextOverflow.ELLIPSIS, opacity=1, animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT)
     )
     hero_subtitle = ft.Text(
-        "Your personal high-performance streaming server.", size=18, color="#CCCCCC", 
+        "Your personal high-performance streaming server.", size=14, color="#CCCCCC", 
         weight=ft.FontWeight.W_500, opacity=1, animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT)
     )
     
-    def on_hero_play_click(e):
-        if hero_state["media"]:
-            # Play the hero media
-            page.session.store.set("current_media", hero_state["media"])
-            if hero_state.get("gallery"):
-                page.session.store.set("current_gallery", hero_state["gallery"])
-            page.run_task(page.push_route, f"/viewer/{hero_state['media']['name']}")
-            
-    hero_play_container = ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.Icons.PLAY_ARROW_ROUNDED),
-            ft.Text("Play Media", weight=ft.FontWeight.BOLD)
-        ], tight=True),
-        bgcolor=current_theme,
-        padding=ft.Padding(left=30, right=30, top=20, bottom=20),
-        border_radius=8,
-        border=ft.Border(
-            top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-            right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-            bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-            left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
-        )
-    )
-    
-    def on_hero_play_focus(focused):
-        if focused:
-            hero_play_container.border = ft.Border(
-                top=ft.BorderSide(3, ft.Colors.PRIMARY),
-                right=ft.BorderSide(3, ft.Colors.PRIMARY),
-                bottom=ft.BorderSide(3, ft.Colors.PRIMARY),
-                left=ft.BorderSide(3, ft.Colors.PRIMARY)
-            )
-        else:
-            hero_play_container.border = ft.Border(
-                top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-                right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-                bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
-                left=ft.BorderSide(0, ft.Colors.TRANSPARENT)
-            )
-        hero_play_container.update()
-
-    hero_play_btn = ft.GestureDetector(
-        content=hero_play_container,
-        on_tap=on_hero_play_click,
-        visible=False,
-        opacity=0,
-        animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT)
-    )
-    hero_play_btn.focus_node = {
-        "is_card": False,
-        "set_focus": on_hero_play_focus,
-        "click": lambda: on_hero_play_click(None)
-    }
 
     # We make the hero_banner expand natively without a fixed height constraint
     hero_banner = ft.Container(
@@ -146,12 +100,10 @@ def home_view(page: ft.Page) -> ft.View:
             ),
             # Text Content Overlay (Fixed positioning)
             ft.Container(
-                left=40, right=40, top=160,
+                left=40, right=40, top=100,
                 content=ft.Column([
                     hero_title,
-                    hero_subtitle,
-                    ft.Container(height=15),
-                    hero_play_btn
+                    hero_subtitle
                 ])
             )
         ])
@@ -168,11 +120,11 @@ def home_view(page: ft.Page) -> ft.View:
         
         # Determine aesthetic aspect ratios
         if is_audio:
-            card_w, card_h = 180, 180 # 1:1 for music
+            card_w, card_h = 130, 130 # 1:1 for music
         elif h_val > w_val:
-            card_w, card_h = 135, 180 # 3:4 for portrait
+            card_w, card_h = 95, 130 # 3:4 for portrait
         else:
-            card_w, card_h = 270, 180 # 3:2 for landscape (or fallback)
+            card_w, card_h = 195, 130 # 3:2 for landscape (or fallback)
         
         # Determine the visual content (thumbnail or fallback icon)
         import os
@@ -190,72 +142,77 @@ def home_view(page: ft.Page) -> ft.View:
             )
 
         async def update_hero_banner(data, gallery_list=None):
-            try:
-                page.session.store.set("hero_update_target", data["id"])
-                if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
-                    return
+            global _hero_debounce_task
+            
+            # Cancel any pending hero update immediately to prevent overlapping socket calls during fast navigation
+            if _hero_debounce_task and not _hero_debounce_task.done():
+                try:
+                    _hero_debounce_task.cancel()
+                except Exception:
+                    pass
+            
+            async def run_update():
+                try:
+                    # Phase 1: Wait to see if the user stays on this card (250ms debounce)
+                    await asyncio.sleep(0.25)
                     
-                hero_state["media"] = data
-                hero_state["gallery"] = gallery_list
-                
-                # --- PHASE 1: FADE OUT TO BLACK ---
-                hero_image.opacity = 0
-                hero_title.opacity = 0
-                hero_subtitle.opacity = 0
-                hero_play_btn.opacity = 0
-                if page.route == "/home":
-                    try: page.update()
-                    except Exception: pass
-                
-                # Wait for the fade out to finish (allows image loading in background)
-                await asyncio.sleep(0.4)
-                
-                # Debounce check: if user Arrowed past this card during the 400ms fade, abort!
-                if page.session.store.get("hero_update_target") != data["id"]:
-                    return
+                    if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
+                        return
                     
-                # --- PHASE 2: UPDATE CONTENT ---
-                img_url = data.get("url", "")
-                if img_url:
-                    # Force Google Drive API to return a 1080p high-res thumbnail
-                    if "googleusercontent.com" in img_url and "=" in img_url:
-                        base_url = img_url.split("=")[0]
-                        img_url = f"{base_url}=s1080"
+                    hero_state["media"] = data
+                    hero_state["gallery"] = gallery_list
                     
-                    hero_opacity = 0.5
-                else:
-                    # Fallback to default cinematic background if media has no thumbnail
-                    img_url = "Logo.png"
-                    hero_opacity = 0.4
-                
-                hero_image.src = img_url
-                hero_title.value = data["name"]
-                
-                if data.get("is_audio"):
-                    hero_subtitle.value = "Audio • High Quality"
-                    hero_play_container.content.controls[0].icon = ft.Icons.PLAY_ARROW_ROUNDED
-                    hero_play_container.content.controls[1].value = "Play Media"
-                elif "video/" in data.get("mimeType", ""):
-                    hero_subtitle.value = "Video • Ready to Stream"
-                    hero_play_container.content.controls[0].icon = ft.Icons.PLAY_ARROW_ROUNDED
-                    hero_play_container.content.controls[1].value = "Play Media"
-                else:
-                    hero_subtitle.value = "Photo • View Fullscreen"
-                    hero_play_container.content.controls[0].icon = ft.Icons.IMAGE
-                    hero_play_container.content.controls[1].value = "View Image"
+                    # --- PHASE 2: FADE OUT TO BLACK ---
+                    hero_image.opacity = 0
+                    hero_title.opacity = 0
+                    hero_subtitle.opacity = 0
+                    if page.route == "/home":
+                        try:
+                            hero_image.update()
+                            hero_title.update()
+                            hero_subtitle.update()
+                        except Exception: pass
                     
-                hero_play_btn.visible = True
-                
-                # --- PHASE 3: FADE CONTENT BACK IN ---
-                hero_image.opacity = hero_opacity
-                hero_title.opacity = 1
-                hero_subtitle.opacity = 1
-                hero_play_btn.opacity = 1
-                if page.route == "/home":
-                    try: page.update()
-                    except Exception: pass
-            except Exception:
-                pass
+                    # Wait for the fade out to finish (allows image loading in background)
+                    await asyncio.sleep(0.3)
+                    
+                    # --- PHASE 3: UPDATE CONTENT ---
+                    img_url = data.get("url", "")
+                    if img_url:
+                        # Force Google Drive API to return a 1080p high-res thumbnail
+                        if "googleusercontent.com" in img_url and "=" in img_url:
+                            base_url = img_url.split("=")[0]
+                            img_url = f"{base_url}=s1080"
+                        
+                        hero_opacity = 0.5
+                    else:
+                        # Fallback to default cinematic background if media has no thumbnail
+                        img_url = "Logo.png"
+                        hero_opacity = 0.4
+                    
+                    hero_image.src = img_url
+                    hero_title.value = data["name"]
+                    
+                    if data.get("is_audio"):
+                        hero_subtitle.value = "Audio • High Quality"
+                    elif "video/" in data.get("mimeType", ""):
+                        hero_subtitle.value = "Video • Ready to Stream"
+                    else:
+                        hero_subtitle.value = "Photo • View Fullscreen"
+                    
+                    # --- PHASE 4: FADE CONTENT BACK IN ---
+                    hero_image.opacity = hero_opacity
+                    hero_title.opacity = 1
+                    hero_subtitle.opacity = 1
+                    if page.route == "/home":
+                        try: page.update()
+                        except Exception: pass
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            
+            _hero_debounce_task = page.run_task(run_update)
 
         async def on_card_tap(e, data=item_data):
             if hero_state["media"] and hero_state["media"]["id"] == data["id"]:
@@ -310,6 +267,15 @@ def home_view(page: ft.Page) -> ft.View:
                 )
             focus_overlay.update()
 
+        title_control = ft.Text(
+            item_data["name"],
+            size=10,
+            max_lines=3, # Allow up to 3 lines for long filenames
+            overflow=ft.TextOverflow.ELLIPSIS,
+            color="white",
+            weight=ft.FontWeight.W_600
+        )
+
         card_stack = ft.Stack([
             visual_content,
             # Subtle dark text overlay at the bottom of the card for filenames
@@ -321,17 +287,39 @@ def home_view(page: ft.Page) -> ft.View:
                     end=ft.Alignment(0.0, 1.0),
                     colors=["#00000000", "#D9000000"]
                 ),
-                content=ft.Text(
-                    item_data["name"],
-                    size=12,
-                    max_lines=3, # Allow up to 3 lines for long filenames
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                    color="white",
-                    weight=ft.FontWeight.W_600
-                )
+                content=title_control
             ),
             focus_overlay
         ])
+        
+        # --- Lazy Load Album Art (staggered so not all fire at once) ---
+        if is_audio and not item_data.get("url"):
+            # Unique stagger delay based on card index to avoid thundering herd
+            _lazy_card_counter[0] += 1
+            _stagger_idx = _lazy_card_counter[0]
+            async def lazy_load_cover(_idx=_stagger_idx):
+                # Stagger: wait a bit longer for each successive card
+                await asyncio.sleep(0.3 + _idx * 0.15)
+                async with _cover_semaphore:
+                    if page.route != "/home": return
+                    from services.metadata_service import get_audio_metadata
+                    meta = await get_audio_metadata(item_data["stream_url"], item_data["id"], item_data["name"])
+                    
+                    changed = False
+                    if meta.get("title") and meta.get("title") != item_data["name"]:
+                        item_data["name"] = meta["title"]
+                        title_control.value = meta["title"]
+                        changed = True
+                    if meta.get("cover_path"):
+                        item_data["url"] = meta["cover_path"]
+                        card_stack.controls[0] = ft.Image(src=meta["cover_path"], fit="cover", width=card_w, height=card_h)
+                        changed = True
+                        
+                    if changed and page.route == "/home":
+                        try: card_stack.update()
+                        except Exception: pass
+            
+            page.run_task(lazy_load_cover)
         
         import uuid
         card_key = f"card_{uuid.uuid4()}"
@@ -364,18 +352,21 @@ def home_view(page: ft.Page) -> ft.View:
         import uuid
         row_key = f"shelf_{uuid.uuid4()}"
         
+        # Limit to max 25 items per shelf to keep TV render times and JSON communication bridge snappier
+        capped_items = items_list[:25]
+        
         horizontal_row = ft.Row(
             scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
             spacing=12,
         )
-        horizontal_row.controls = [build_media_card(item, items_list, horizontal_row, row_key) for item in items_list]
+        horizontal_row.controls = [build_media_card(item, items_list, horizontal_row, row_key) for item in capped_items]
         
         return ft.Column(
             key=row_key,
             controls=[
                 ft.Text(
                     value=category_title,
-                    size=18,
+                    size=14,
                     weight=ft.FontWeight.BOLD,
                     color="#E5E5E5"
                 ),
@@ -437,8 +428,8 @@ def home_view(page: ft.Page) -> ft.View:
             ft.Column(
                 spacing=2,
                 controls=[
-                    ft.Text(f"{greeting}, {user_name}!", size=26, weight=ft.FontWeight.BOLD, color="white"),
-                    ft.Text("E-stream'o", size=14, weight=ft.FontWeight.W_900, color=ft.Colors.PRIMARY),
+                    ft.Text(f"{greeting}, {user_name}!", size=20, weight=ft.FontWeight.BOLD, color="white"),
+                    ft.Text("E-stream'o", size=12, weight=ft.FontWeight.W_900, color=ft.Colors.PRIMARY),
                 ]
             ),
             settings_button
@@ -451,6 +442,9 @@ def home_view(page: ft.Page) -> ft.View:
         scroll=ft.ScrollMode.HIDDEN # Hide scrollbars for a cleaner UI
     )
 
+    # Stagger counter for lazy art loading
+    _lazy_card_counter = [0]
+    
     async def load_dashboard_content():
         """Fetches the actual media from Google Drive and updates the UI."""
         def safe_update():
@@ -507,8 +501,8 @@ def home_view(page: ft.Page) -> ft.View:
                 shelf_container.controls.clear()
             except Exception as e:
                 if "UNAUTHENTICATED" in str(e):
-                    import os, tempfile
-                    token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+                    from config import get_persistent_data_dir
+                    token_cache_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
                     if os.path.exists(token_cache_path):
                         try:
                             os.remove(token_cache_path)
@@ -536,6 +530,9 @@ def home_view(page: ft.Page) -> ft.View:
             safe_update()
             return
             
+        # Add a top spacer so the first shelf sits entirely below the cinematic fade zone
+        shelf_container.controls.append(ft.Container(height=35))
+            
         def extract_dims(m):
             w, h = 0, 0
             if "imageMediaMetadata" in m:
@@ -562,23 +559,34 @@ def home_view(page: ft.Page) -> ft.View:
                 thumb_url = m.get("thumbnailLink", "")
                 
                 if is_audio:
-                    from services.metadata_service import get_audio_metadata
-                    audio_meta = m.get("audio", {})
-                    if audio_meta and audio_meta.get("title"):
-                        artist = audio_meta.get("artist", "")
-                        if artist:
-                            name = f"{artist} - {audio_meta['title']}"
-                        else:
-                            name = audio_meta["title"]
+                    # 1. First check our local offline persistent cache for real title and cover art!
+                    from config import get_persistent_data_dir
+                    cache_dir = os.path.join(get_persistent_data_dir(), "estreamo_metadata_cache")
+                    json_path = os.path.join(cache_dir, f"{m['id']}.json")
+                    
+                    loaded_from_cache = False
+                    if os.path.exists(json_path):
+                        try:
+                            with open(json_path, "r", encoding="utf-8") as f:
+                                meta = json.load(f)
+                                if meta.get("title"):
+                                    name = meta["title"]
+                                if meta.get("cover_path") and os.path.exists(meta["cover_path"]):
+                                    thumb_url = meta["cover_path"]
+                                loaded_from_cache = True
+                        except Exception:
+                            pass
                             
-                    # ALWAYS extract ID3 tags to get the local cover art, because
-                    # OneDrive's mediap.svc.ms thumbnail URLs frequently expire/fail in Flet
-                    meta = await get_audio_metadata(m.get("url", ""), m["id"], name)
-                    if meta.get("title") and meta.get("title") != name and name == m["name"]:
-                        name = meta["title"]
-                    if meta.get("cover_path"):
-                        thumb_url = meta["cover_path"]
-                    elif "mediap.svc.ms" in thumb_url or "microsoftpersonalcontent.com" in thumb_url:
+                    if not loaded_from_cache:
+                        # Fallback to OneDrive API tags
+                        audio_meta = m.get("audio") or {}
+                        if audio_meta and audio_meta.get("title"):
+                            artist = audio_meta.get("artist", "")
+                            if artist:
+                                name = f"{artist} - {audio_meta['title']}"
+                            else:
+                                name = audio_meta["title"]
+                    if "mediap.svc.ms" in thumb_url or "microsoftpersonalcontent.com" in thumb_url:
                         thumb_url = ""
                         
                 cat = "Music" if is_audio else ("Photos" if "image/" in m.get("mimeType", "") else "Videos") if folder_name == "Root" else folder_name
@@ -599,7 +607,14 @@ def home_view(page: ft.Page) -> ft.View:
                 processed_items = cached_processed_dict[folder_name]
             else:
                 raw_results = await asyncio.gather(*[process_item(m) for m in files], return_exceptions=True)
-                processed_items = [r for r in raw_results if isinstance(r, dict)]
+                processed_items = []
+                for m_item, r in zip(files, raw_results):
+                    if isinstance(r, dict):
+                        processed_items.append(r)
+                    else:
+                        print(f"Exception processing item '{m_item.get('name')}': {r}")
+                        import traceback
+                        traceback.print_exception(type(r), r, r.__traceback__)
                 
             new_processed_dict[folder_name] = processed_items
                 
@@ -618,13 +633,15 @@ def home_view(page: ft.Page) -> ft.View:
                 # Group all media within a subfolder into its own dedicated category shelf
                 shelf_container.controls.append(build_category_shelf(folder_name, processed_items))
                 
+        # Append a massive empty spacer at the bottom to guarantee enough scroll extent 
+        # so that Flet always performs the smooth scroll_to animation!
+        shelf_container.controls.append(ft.Container(height=600))
+                
         page.session.store.set("home_cached_processed_items", new_processed_dict)
                 
         # Build the 2D Grid for strict Up/Down/Left/Right HTPC Navigation!
         grid = []
         top_row = [settings_button.focus_node]
-        if hero_play_btn.visible:
-            top_row.append(hero_play_btn.focus_node)
         grid.append(top_row)
         
         for shelf in shelf_container.controls:
@@ -642,6 +659,63 @@ def home_view(page: ft.Page) -> ft.View:
                 page.session.store.set("home_grid_pos", (0, 0))
                 
             safe_update()
+            
+            # --- START PERSISTENT BACKGROUND PRE-FETCH WORKER ---
+            # Sequentially fetches and writes metadata/album art for ALL tracks in the folder
+            # in the background, making it highly lightweight and completely unnoticeable!
+            if not page.session.store.get("prefetch_running"):
+                page.session.store.set("prefetch_running", True)
+                
+                async def run_persistent_metadata_prefetch():
+                    try:
+                        # Let the user settle first (wait 3 seconds after rendering)
+                        await asyncio.sleep(3.0)
+                        
+                        all_audio_tracks = []
+                        for folder_k, items in new_processed_dict.items():
+                            for item in items:
+                                if item.get("is_audio") and item.get("stream_url"):
+                                    all_audio_tracks.append(item)
+                                    
+                        if not all_audio_tracks:
+                            page.session.store.set("prefetch_running", False)
+                            return
+                            
+                        for track in all_audio_tracks:
+                            if not page.session.store.get("onedrive_access_token"):
+                                break
+                            
+                            from services.metadata_service import get_audio_metadata
+                            meta = await get_audio_metadata(track["stream_url"], track["id"], track["name"])
+                            
+                            # Update track name and cover art in memory
+                            changed = False
+                            if meta.get("title") and meta.get("title") != track["name"]:
+                                track["name"] = meta["title"]
+                                changed = True
+                            if meta.get("cover_path") and meta.get("cover_path") != track["url"]:
+                                track["url"] = meta["cover_path"]
+                                changed = True
+                                
+                            # Live player queue hydration:
+                            # If the music player queue contains this track, update it in-place and refresh the player UI!
+                            if changed:
+                                audio_state = page.session.store.get("audio_state")
+                                if audio_state and audio_state.queue:
+                                    for q_track in audio_state.queue:
+                                        if q_track["id"] == track["id"]:
+                                            q_track["name"] = track["name"]
+                                            q_track["url"] = track["url"]
+                                            audio_state.notify_ui()
+                                            break
+                                
+                            await asyncio.sleep(0.1) # Tiny sleep to avoid CPU thread starvation
+                    except Exception:
+                        pass
+                    finally:
+                        page.session.store.set("prefetch_running", False)
+                        
+                page.run_task(run_persistent_metadata_prefetch)
         except Exception:
             pass
         
@@ -673,7 +747,7 @@ def home_view(page: ft.Page) -> ft.View:
         elif e.key == "Arrow Up":
             r = max(r - 1, 0)
             c = 0
-        elif e.key == "Enter" or e.key == "Space":
+        elif e.key in ["Enter", "Space", "Select", "Numpad Enter", "Gamepad Button A"]:
             try:
                 res = old_node["click"]()
                 old_node["set_focus"](True)
@@ -695,18 +769,15 @@ def home_view(page: ft.Page) -> ft.View:
         
         try:
             if r > 0:
-                target_y = max(0, (r - 1) * 240)
-                import asyncio
+                target_y = max(0, (r - 1) * 180)
                 res = shelf_container.scroll_to(offset=target_y, duration=300)
                 if asyncio.iscoroutine(res):
                     await res
-                shelf_container.update()
+                # Do NOT call shelf_container.update() here — scroll_to handles the repaint
             elif r == 0:
-                import asyncio
                 res = shelf_container.scroll_to(offset=0, duration=300)
                 if asyncio.iscoroutine(res):
                     await res
-                shelf_container.update()
         except Exception:
             pass
             
@@ -715,14 +786,13 @@ def home_view(page: ft.Page) -> ft.View:
                 card_w = new_node.get("card_w", 180)
                 target_x = max(0, (c - 1) * (card_w + 12))
                 row = new_node["horizontal_row"]
-                import asyncio
                 res = row.scroll_to(offset=target_x, duration=300)
                 if asyncio.iscoroutine(res):
-                    async def safe_scroll(c):
-                        try: await c
+                    async def safe_scroll(co):
+                        try: await co
                         except Exception: pass
                     page.run_task(safe_scroll, res)
-                row.update()
+                # Do NOT call row.update() — scroll_to handles its own repaint
             except Exception: pass
             
     page.session.store.set("keyboard_handler", home_keyboard)
@@ -740,7 +810,7 @@ def home_view(page: ft.Page) -> ft.View:
             begin=ft.Alignment.TOP_CENTER,
             end=ft.Alignment.BOTTOM_CENTER,
             colors=["#00000000", "#FF000000", "#FF000000"],
-            stops=[0.0, 0.35, 1.0] # Fades from transparent to opaque over the top 35%
+            stops=[0.0, 0.08, 1.0] # Fades from transparent to opaque over the top 8%
         ),
     )
 
@@ -765,7 +835,7 @@ def home_view(page: ft.Page) -> ft.View:
             ft.Container(
                 padding=ft.Padding(left=40, right=40, top=0, bottom=20),
                 content=masked_shelves,
-                left=0, right=0, top=420, bottom=0
+                left=0, right=0, top=260, bottom=0
             )
         ]
     )

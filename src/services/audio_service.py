@@ -117,6 +117,7 @@ class GlobalAudioState:
                 if asyncio.iscoroutine(res): 
                     await res
             except Exception as ex:
+                pass
             try: self.engine.update()
             except: pass
             self.is_playing = False
@@ -127,6 +128,7 @@ class GlobalAudioState:
                 if asyncio.iscoroutine(res): 
                     await res
             except Exception as ex:
+                pass
             try: self.engine.update()
             except: pass
             self.is_playing = True
@@ -142,6 +144,24 @@ class GlobalAudioState:
         except: pass
         self.is_playing = False
         self.notify_ui()
+        
+    async def seek_forward(self, ms=10000):
+        try:
+            pos = await self.engine.get_current_position()
+            if pos is not None:
+                new_pos = min(self.dur_ms, pos.in_milliseconds + ms)
+                res = self.engine.seek(new_pos)
+                if asyncio.iscoroutine(res): await res
+        except: pass
+        
+    async def seek_backward(self, ms=10000):
+        try:
+            pos = await self.engine.get_current_position()
+            if pos is not None:
+                new_pos = max(0, pos.in_milliseconds - ms)
+                res = self.engine.seek(new_pos)
+                if asyncio.iscoroutine(res): await res
+        except: pass
             
     async def next(self):
         if self.loop_mode == 2: # Loop Song

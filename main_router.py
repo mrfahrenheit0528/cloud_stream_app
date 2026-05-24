@@ -16,10 +16,10 @@ def main(page: ft.Page):
         page.bgcolor = "#111111"
         page.update() # Immediately push the black background to unlock the Flutter engine
 
-        # Load persistent preferences securely using cross-platform temp directory
+        # Load persistent preferences securely using cross-platform persistent directory
         import json
-        import tempfile
-        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+        from config import get_persistent_data_dir
+        prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
         if os.path.exists(prefs_path):
             try:
                 with open(prefs_path, "r") as f:

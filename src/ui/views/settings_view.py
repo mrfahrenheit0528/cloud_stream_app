@@ -1,6 +1,8 @@
 import asyncio
 import urllib.parse
 import flet as ft
+import os
+import json
 
 def settings_view(page: ft.Page) -> ft.View:
     """User preferences and disconnect options (Route: "/settings")"""
@@ -11,26 +13,87 @@ def settings_view(page: ft.Page) -> ft.View:
     current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
     # ── Input Controls ──────────────────────────────────────────────────────
+    # Name Modal Logic
+    modal_name_field = ft.TextField(label="Display Name", value=current_name)
+    
+    def close_name_modal(e):
+        name_modal.open = False
+        page.update()
+        
+    def save_name_modal(e):
+        name_field.value = modal_name_field.value
+        name_field.update()
+        name_modal.open = False
+        page.update()
+        
+    name_modal = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Edit Display Name"),
+        content=modal_name_field,
+        actions=[
+            ft.TextButton("Cancel", on_click=close_name_modal),
+            ft.ElevatedButton("Save", on_click=save_name_modal),
+        ]
+    )
+
+    async def edit_name(e):
+        if name_modal not in page.overlay:
+            page.overlay.append(name_modal)
+        modal_name_field.value = name_field.value
+        name_modal.open = True
+        page.update()
+        res = modal_name_field.focus()
+        if hasattr(res, "__await__"): await res
+
     name_field = ft.TextField(
         label="Display Name",
         value=current_name,
         bgcolor="#111111",
         border_color="transparent",
         prefix_icon=ft.Icons.PERSON,
+        disabled=True,
         expand=True,
     )
 
-    def clear_name(e):
-        name_field.value = ""
-        name_field.update()
-
-    clear_name_btn = ft.IconButton(
-        icon=ft.Icons.CLEAR_ROUNDED,
+    edit_name_btn = ft.IconButton(
+        icon=ft.Icons.EDIT_ROUNDED,
         icon_color="#888888",
-        tooltip="Clear name",
-        on_click=clear_name,
+        tooltip="Edit name",
+        on_click=edit_name,
         icon_size=20,
     )
+
+    # Folder Modal Logic
+    modal_folder_field = ft.TextField(label="OneDrive Folder ID", value=current_folder or "root")
+    
+    def close_folder_modal(e):
+        folder_modal.open = False
+        page.update()
+        
+    def save_folder_modal(e):
+        folder_field.value = modal_folder_field.value
+        folder_field.update()
+        folder_modal.open = False
+        page.update()
+        
+    folder_modal = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Edit Folder ID"),
+        content=modal_folder_field,
+        actions=[
+            ft.TextButton("Cancel", on_click=close_folder_modal),
+            ft.ElevatedButton("Save", on_click=save_folder_modal),
+        ]
+    )
+
+    async def edit_folder(e):
+        if folder_modal not in page.overlay:
+            page.overlay.append(folder_modal)
+        modal_folder_field.value = folder_field.value
+        folder_modal.open = True
+        page.update()
+        res = modal_folder_field.focus()
+        if hasattr(res, "__await__"): await res
 
     folder_field = ft.TextField(
         label="OneDrive Root Folder ID (or 'root')",
@@ -38,7 +101,16 @@ def settings_view(page: ft.Page) -> ft.View:
         bgcolor="#111111",
         border_color="transparent",
         prefix_icon=ft.Icons.FOLDER_SHARED,
+        disabled=True,
         expand=True,
+    )
+    
+    edit_folder_btn = ft.IconButton(
+        icon=ft.Icons.EDIT_ROUNDED,
+        icon_color="#888888",
+        tooltip="Edit folder",
+        on_click=edit_folder,
+        icon_size=20,
     )
 
     # ── OneDrive Folder Picker Logic ─────────────────────────────────────────
@@ -56,8 +128,8 @@ def settings_view(page: ft.Page) -> ft.View:
                 page.session.store.set("onedrive_refresh_token", res["refresh_token"])
                 
                 # Update persistent prefs file since refresh token rolls
-                import json, os, tempfile
-                prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+                from config import get_persistent_data_dir
+                prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
                 prefs = {}
                 if os.path.exists(prefs_path):
                     try:
@@ -69,7 +141,7 @@ def settings_view(page: ft.Page) -> ft.View:
                     json.dump(prefs, f)
                     
                 # Update token cache as well
-                token_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+                token_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
                 if os.path.exists(token_path):
                     try:
                         with open(token_path, "r") as f:
@@ -321,8 +393,8 @@ def settings_view(page: ft.Page) -> ft.View:
         page.session.store.set("onedrive_folder_id", extracted_id)
         page.session.store.set("theme_color", selected_color)
 
-        import json, os, tempfile
-        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+        from config import get_persistent_data_dir
+        prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
         prefs = {}
         if os.path.exists(prefs_path):
             try:
@@ -354,9 +426,9 @@ def settings_view(page: ft.Page) -> ft.View:
         disconnect_dialog.open = False
         page.update()
 
-        import os, tempfile
-        token_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
-        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+        from config import get_persistent_data_dir
+        token_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
+        prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
         for path in (token_path, prefs_path):
             try:
                 if os.path.exists(path):
@@ -397,14 +469,14 @@ def settings_view(page: ft.Page) -> ft.View:
     disconnect_wrap.on_click = confirm_disconnect
 
     # ── 2D Keyboard Focus Grid ───────────────────────────────────────────────
-    # Row 0: [name_field, clear_name_btn]
+    # Row 0: [edit_name_btn]
     # Row 1: color swatches
-    # Row 2: [folder_field, browse_wrap]
+    # Row 2: [edit_folder_btn, browse_wrap]
     # Row 3: [save_wrap, disconnect_wrap]
     grid = [
-        [name_field, clear_name_btn],
+        [edit_name_btn],
         color_row.controls,
-        [folder_field, browse_wrap],
+        [edit_folder_btn, browse_wrap],
         [save_wrap, disconnect_wrap],
     ]
     focus_state = {"r": 0, "c": 0}
@@ -448,6 +520,7 @@ def settings_view(page: ft.Page) -> ft.View:
                 if hasattr(res, "__await__"):
                     await res
             except Exception: pass
+            except Exception: pass
         else:
             # TextField / IconButton — native focus
             try:
@@ -456,6 +529,19 @@ def settings_view(page: ft.Page) -> ft.View:
                     await res
             except Exception:
                 pass
+                
+        # Scroll logic to keep selected items in view
+        try:
+            if focus_state["r"] >= 2:
+                # Scroll down to show action buttons (increased offset to prevent cut-offs on TVs)
+                res = main_scroll_col.scroll_to(offset=500, duration=300)
+            else:
+                # Scroll back to the top
+                res = main_scroll_col.scroll_to(offset=0, duration=300)
+                
+            if hasattr(res, "__await__"):
+                await res
+        except Exception: pass
 
         try:
             page.update()
@@ -464,10 +550,12 @@ def settings_view(page: ft.Page) -> ft.View:
 
     async def settings_keyboard(e: ft.KeyboardEvent):
         # Dialogs consume all keys
-        if drive_dialog.open or disconnect_dialog.open:
+        if drive_dialog.open or disconnect_dialog.open or getattr(name_modal, "open", False) or getattr(folder_modal, "open", False):
             if e.key in ["Escape", "BrowserBack", "Backspace"]:
                 drive_dialog.open = False
                 disconnect_dialog.open = False
+                name_modal.open = False
+                folder_modal.open = False
                 page.update()
             return
 
@@ -489,7 +577,7 @@ def settings_view(page: ft.Page) -> ft.View:
             c = min(len(grid[r]) - 1, c + 1)
         elif e.key == "Arrow Left":
             c = max(0, c - 1)
-        elif e.key in ["Enter", "Space", "MediaPlayPause"]:
+        elif e.key in ["Enter", "Space", "MediaPlayPause", "Select", "Gamepad Button A", "Numpad Enter"]:
             ctrl = grid[r][c]
             try:
                 if isinstance(ctrl, ft.Container) and getattr(ctrl, "on_click", None):
@@ -519,15 +607,9 @@ def settings_view(page: ft.Page) -> ft.View:
     page.run_task(initial_focus)
 
     # ── View Layout ──────────────────────────────────────────────────────────
-    return ft.View(
-        route="/settings",
-        bgcolor="#111111",
-        appbar=ft.AppBar(
-            title=ft.Text("Settings", weight=ft.FontWeight.BOLD),
-            bgcolor="#000000",
-        ),
-        padding=20,
-        scroll=ft.ScrollMode.AUTO,
+    main_scroll_col = ft.Column(
+        expand=True,
+        scroll=ft.ScrollMode.HIDDEN,
         controls=[
             ft.Text("Settings", size=32, weight=ft.FontWeight.W_900, color="white"),
             ft.Divider(height=20, color="transparent"),
@@ -544,7 +626,7 @@ def settings_view(page: ft.Page) -> ft.View:
                     ]),
                     ft.Divider(height=10, color="transparent"),
                     ft.Row(
-                        controls=[name_field, clear_name_btn],
+                        controls=[name_field, edit_name_btn],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ]),
@@ -581,7 +663,7 @@ def settings_view(page: ft.Page) -> ft.View:
                     ]),
                     ft.Text("Select the root folder in OneDrive containing your media library.", color="gray"),
                     ft.Divider(height=10, color="transparent"),
-                    ft.Row(controls=[folder_field, browse_wrap]),
+                    ft.Row(controls=[folder_field, edit_folder_btn, browse_wrap]),
                 ]),
             ),
 
@@ -592,6 +674,18 @@ def settings_view(page: ft.Page) -> ft.View:
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[save_wrap, disconnect_wrap],
             ),
+            ft.Container(height=100), # Spacer to ensure full visibility at bottom
             dummy_focus
-        ],
+        ]
+    )
+
+    return ft.View(
+        route="/settings",
+        bgcolor="#111111",
+        appbar=ft.AppBar(
+            title=ft.Text("Settings", weight=ft.FontWeight.BOLD),
+            bgcolor="#000000",
+        ),
+        padding=20,
+        controls=[main_scroll_col],
     )

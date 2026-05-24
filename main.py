@@ -15,10 +15,10 @@ def main(page: ft.Page):
         page.bgcolor = "#111111"
         page.update() # Immediately push the black background to unlock the Flutter engine
 
-        # Load persistent preferences securely using cross-platform temp directory
+        # Load persistent preferences securely using cross-platform persistent directory
         import json
-        import tempfile
-        prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+        from config import get_persistent_data_dir
+        prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
         if os.path.exists(prefs_path):
             try:
                 with open(prefs_path, "r") as f:
@@ -61,6 +61,28 @@ def main(page: ft.Page):
             if now - last_key_time < 0.15:
                 return
             last_key_time = now
+            
+            # Global Media Control Keys (Android TV dedicated hardware buttons)
+            audio_state = page.session.store.get("audio_state")
+            if audio_state:
+                if e.key in ["Media Play Pause", "MediaPlayPause"]:
+                    page.run_task(audio_state.toggle_play)
+                    return
+                elif e.key in ["Media Play", "MediaPlay"]:
+                    if not audio_state.is_playing: page.run_task(audio_state.toggle_play)
+                    return
+                elif e.key in ["Media Pause", "MediaPause"]:
+                    if audio_state.is_playing: page.run_task(audio_state.toggle_play)
+                    return
+                elif e.key in ["Media Next Track", "MediaTrackNext"]:
+                    page.run_task(audio_state.next)
+                    return
+                elif e.key in ["Media Previous Track", "MediaTrackPrevious"]:
+                    page.run_task(audio_state.prev)
+                    return
+                elif e.key in ["Media Stop"]:
+                    page.run_task(audio_state.stop_audio)
+                    return
             
             handler = page.session.store.get("keyboard_handler")
             if handler:

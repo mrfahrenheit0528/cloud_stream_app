@@ -102,7 +102,7 @@ async def refresh_access_token(refresh_token: str) -> dict:
         raise Exception(f"Token refresh failed: {err.get('error_description', str(e))}")
 
 async def fetch_user_profile(access_token: str) -> dict:
-    """Retrieve the user's display name from Microsoft Graph."""
+    """Retrieve the user's display name and profile picture from Microsoft Graph."""
     try:
         req = urllib.request.Request(
             "https://graph.microsoft.com/v1.0/me",
@@ -114,9 +114,32 @@ async def fetch_user_profile(access_token: str) -> dict:
         res = await asyncio.to_thread(fetch)
         display_name = res.get("displayName", "User")
         given_name = res.get("givenName", display_name.split(" ")[0])
+        
+        # Fetch profile photo
+        picture_path = ""
+        try:
+            photo_req = urllib.request.Request(
+                "https://graph.microsoft.com/v1.0/me/photo/$value",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            def fetch_photo():
+                with urllib.request.urlopen(photo_req) as response:
+                    return response.read()
+            photo_bytes = await asyncio.to_thread(fetch_photo)
+            
+            from config import get_persistent_data_dir
+            import os
+            dest_path = os.path.join(get_persistent_data_dir(), "estreamo_avatar.jpg")
+            with open(dest_path, "wb") as f:
+                f.write(photo_bytes)
+            picture_path = dest_path
+        except Exception:
+            # Silently ignore photo fetch errors (e.g. 404 if no photo is set)
+            pass
+
         return {
             "given_name": given_name,
-            "picture": ""
+            "picture": picture_path
         }
     except Exception:
         return {"given_name": "User", "picture": ""}

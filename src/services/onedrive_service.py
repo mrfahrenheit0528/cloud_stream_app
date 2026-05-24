@@ -138,7 +138,7 @@ async def get_media(token: str, folder_id: str, include_subfolders: bool = True)
                 "thumbnailLink": thumbnail_url,
                 "hasThumbnail": bool(thumbnail_url),
                 "iconLink": "",
-                "audio": item.get("audio", {}),
+                "audio": item.get("audio") or {},
             })
             
         return {

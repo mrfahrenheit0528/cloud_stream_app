@@ -137,7 +137,8 @@ def login_view(page: ft.Page) -> ft.View:
             picture_url = user_info.get("picture", "")
 
             # Step 5: Persist token to disk for speed loading
-            token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
+            from config import get_persistent_data_dir
+            token_cache_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
             with open(token_cache_path, "w") as f:
                 json.dump({
                     "access_token": token_result["access_token"],
@@ -153,7 +154,7 @@ def login_view(page: ft.Page) -> ft.View:
             page.session.store.set("user_picture_url", picture_url)
 
             # Also write to standard persistent preferences so it survives app restarts
-            prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+            prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
             prefs = {}
             if os.path.exists(prefs_path):
                 try:

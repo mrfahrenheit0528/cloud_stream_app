@@ -20,9 +20,10 @@ class AppRouter:
             self.page.views.clear()
 
             # 1. Fast-path Token Bypass for Native Desktop/Mobile Mode
-            import os, tempfile, json
-            token_cache_path = os.path.join(tempfile.gettempdir(), "estreamo_token.json")
-            prefs_path = os.path.join(tempfile.gettempdir(), "estreamo_prefs.json")
+            import os, json
+            from config import get_persistent_data_dir
+            token_cache_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
+            prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
 
             # Load saved preferences (refresh token, folder, theme) on every cold start
             if os.path.exists(prefs_path) and not self.page.session.store.contains_key("_prefs_loaded"):
@@ -73,6 +74,53 @@ class AppRouter:
                         pass
 
             is_logged_in = self.page.session.store.contains_key("onedrive_access_token")
+
+            if is_logged_in:
+                # Ensure user profile and picture are loaded from token cache if missing from session
+                if (not self.page.session.store.contains_key("user_picture_url") or 
+                    not self.page.session.store.contains_key("user_display_name")) and os.path.exists(token_cache_path):
+                    try:
+                        with open(token_cache_path, "r") as f:
+                            data = json.load(f)
+                            if not self.page.session.store.contains_key("user_picture_url"):
+                                self.page.session.store.set("user_picture_url", data.get("picture_url", ""))
+                            if not self.page.session.store.contains_key("user_display_name"):
+                                self.page.session.store.set("user_display_name", data.get("given_name", "User"))
+                    except Exception:
+                        pass
+
+                # Self-healing avatar cache logic:
+                # If picture_url is missing or the file does not exist, fetch and download it in the background
+                token = self.page.session.store.get("onedrive_access_token")
+                pic_path = self.page.session.store.get("user_picture_url")
+                if token and (not pic_path or not os.path.exists(pic_path)) and not self.page.session.store.get("_avatar_fetching") and not self.page.session.store.get("_avatar_checked"):
+                    self.page.session.store.set("_avatar_fetching", True)
+                    async def refresh_profile_bg():
+                        try:
+                            from services.onedrive_auth import fetch_user_profile
+                            user_info = await fetch_user_profile(token)
+                            new_pic = user_info.get("picture", "")
+                            if new_pic:
+                                self.page.session.store.set("user_picture_url", new_pic)
+                                try:
+                                    with open(token_cache_path, "r") as f:
+                                        cache_data = json.load(f)
+                                    cache_data["picture_url"] = new_pic
+                                    with open(token_cache_path, "w") as f:
+                                        json.dump(cache_data, f)
+                                except Exception:
+                                    pass
+                                
+                                # Refresh home view cache if it exists, and force re-render
+                                self._cached_home_view = None
+                                if self.page.route == "/home":
+                                    await self.page.go_async("/home")
+                        except Exception:
+                            pass
+                        finally:
+                            self.page.session.store.set("_avatar_fetching", False)
+                            self.page.session.store.set("_avatar_checked", True)
+                    self.page.run_task(refresh_profile_bg)
 
             # Mutate route safely to avoid infinite looping
             if not is_logged_in and self.page.route != "/":

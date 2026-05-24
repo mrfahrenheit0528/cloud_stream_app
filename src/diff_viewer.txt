@@ -1,0 +1,247 @@
+﻿diff --git a/src/ui/views/viewer_view.py b/src/ui/views/viewer_view.py
+index 9e04b0d..19c5989 100644
+--- a/src/ui/views/viewer_view.py
++++ b/src/ui/views/viewer_view.py
+@@ -186,13 +186,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
+             loop_base_icon,
+             ft.Container(content=loop_one_text, alignment=ft.Alignment(0, 0))
+         ], width=24, height=24)
+-        
+         loop_btn = build_transport_btn(loop_stack, 24, "white54")
+         
+         def on_toggle(e): 
+             if audio_state: 
+                 page.run_task(audio_state.toggle_play)
+-            else:
+         def on_prev(e): 
+             if audio_state: page.run_task(audio_state.prev)
+         def on_next(e): 
+@@ -217,37 +215,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
+             loop_btn
+         ], alignment=ft.MainAxisAlignment.CENTER)
+         
+-        focus_list = [shuffle_btn, prev_btn, play_btn, next_btn, loop_btn]
+-        focus_state = {"idx": 2}
+-        
+-        def update_audio_focus():
+-            for i, btn in enumerate(focus_list):
+-                if i == focus_state["idx"]:
+-                    btn.container_control.bgcolor = "#33FFFFFF" # Subtle highlight
+-                else:
+-                    btn.container_control.bgcolor = ft.Colors.TRANSPARENT
+-            try: page.update()
+-            except: pass
+-            
+-        update_audio_focus()
+-        
+-
+-
+-        def viewer_keyboard(e: ft.KeyboardEvent):
+-            if e.key in ["Backspace", "Escape", "BrowserBack"]:
+-                exit_player()
+-            elif e.key == "Arrow Left":
+-                focus_state["idx"] = max(0, focus_state["idx"] - 1)
+-                update_audio_focus()
+-            elif e.key == "Arrow Right":
+-                focus_state["idx"] = min(len(focus_list) - 1, focus_state["idx"] + 1)
+-                update_audio_focus()
+-            elif e.key in ["Enter", "Space", "MediaPlayPause"]:
+-                btn = focus_list[focus_state["idx"]]
+-                if btn.on_click:
+-                    btn.on_click(None)
+-                    
+-        page.session.store.set("keyboard_handler", viewer_keyboard)
++        focus_state = {
++            "idx": 2,
++            "pane": "controls",
++            "queue_idx": 0
++        }
+         
+         # No need to mutate engine properties here; audio_service handles secure engine recreation.
+         
+@@ -282,6 +254,29 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
+             
+             track = audio_state.queue[audio_state.current_index]
+             
++            # Dynamic on-demand cover extraction for tracks over index 25 (which weren't cached on home view)
++            if not track.get('url') and track.get('stream_url') and not track.get('_art_fetching'):
++                track['_art_fetching'] = True
++                async def fetch_current_track_art():
++                    try:
++                        from services.metadata_service import get_audio_metadata
++                        meta = await get_audio_metadata(track['stream_url'], track['id'], track['name'])
++                        
++                        changed = False
++                        if meta.get('title') and meta.get('title') != track['name']:
++                            track['name'] = meta['title']
++                            changed = True
++                        if meta.get('cover_path'):
++                            track['url'] = meta['cover_path']
++                            changed = True
++                            
++                        if changed:
++                            # Re-run update_player_ui safely
++                            update_player_ui()
++                    except Exception:
++                        pass
++                page.run_task(fetch_current_track_art)
++            
+             cover = resolve_cover_url(track.get('url', ''), track.get('stream_url', ''))
+             
+             # Update current_media in session so the back button / viewer rebuild stays correct
+@@ -320,25 +315,153 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
+             
+             # Rebuild queue list
+             queue_col.controls.clear()
++            target_idx = 0
+             for i, q_track in enumerate(audio_state.queue):
++                # Self-healing metadata check: if track name has an extension, check the persistent database cache!
++                name_lower = q_track['name'].lower()
++                if any(name_lower.endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma"]):
++                    from config import get_persistent_data_dir
++                    cache_dir = os.path.join(get_persistent_data_dir(), "estreamo_metadata_cache")
++                    json_path = os.path.join(cache_dir, f"{q_track['id']}.json")
++                    if os.path.exists(json_path):
++                        try:
++                            import json
++                            with open(json_path, "r", encoding="utf-8") as f:
++                                meta = json.load(f)
++                                if meta.get("title"):
++                                    q_track['name'] = meta["title"]
++                                if meta.get("cover_path") and os.path.exists(meta["cover_path"]):
++                                    q_track['url'] = meta["cover_path"]
++                        except Exception:
++                            pass
++
+                 is_current = (i == audio_state.current_index)
++                is_focused = (focus_state.get("pane") == "queue" and i == focus_state.get("queue_idx", 0))
++                
++                if focus_state.get("pane") == "queue":
++                    if is_focused:
++                        target_idx = i
++                else:
++                    if is_current:
++                        target_idx = i
++                
++                # Dynamic border and highlight for focused item
++                border_val = ft.Border(
++                    top=ft.BorderSide(2, ft.Colors.PRIMARY),
++                    right=ft.BorderSide(2, ft.Colors.PRIMARY),
++                    bottom=ft.BorderSide(2, ft.Colors.PRIMARY),
++                    left=ft.BorderSide(2, ft.Colors.PRIMARY)
++                ) if is_focused else None
++                
++                bg_val = "#44FFFFFF" if is_focused else ("#333333" if is_current else "transparent")
++                text_color = "white" if (is_current or is_focused) else "gray"
+                 
+                 q_row = ft.Container(
+-                    bgcolor="#333333" if is_current else "transparent",
++                    bgcolor=bg_val,
++                    border=border_val,
+                     border_radius=5,
+                     padding=5,
+-                    content=ft.Text(q_track['name'], color="white" if is_current else "gray", weight=ft.FontWeight.BOLD if is_current else ft.FontWeight.NORMAL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
++                    content=ft.Text(q_track['name'], color=text_color, weight=ft.FontWeight.BOLD if (is_current or is_focused) else ft.FontWeight.NORMAL, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+                 )
+                 queue_col.controls.append(q_row)
+                 
+             try: page.update()
+             except: pass
+             
++            # Smoothly scroll to the active item in the queue using precise offset calculations!
++            if audio_state and len(audio_state.queue) > 0:
++                try:
++                    # Item height is ~28px + 5px spacing = ~33px
++                    target_offset = max(0, (target_idx - 5) * 33)
++                    
++                    async def scroll_active():
++                        import asyncio
++                        await asyncio.sleep(0.05) # Super fast settle on direct offset scroll!
++                        try:
++                            res = queue_col.scroll_to(offset=target_offset, duration=200)
++                            if asyncio.iscoroutine(res):
++                                await res
++                        except: pass
++                    page.run_task(scroll_active)
++                except: pass
++            
+         if audio_state:
+             audio_state.ui_callbacks = [cb for cb in audio_state.ui_callbacks if cb.__name__ != "update_player_ui"]
+             audio_state.ui_callbacks.append(update_player_ui)
+             update_player_ui()
+ 
++        # Define transport D-pad elements, update functions, and key bindings here after update_player_ui is defined
++        focus_list = [shuffle_btn, prev_btn, play_btn, next_btn, loop_btn]
++        
++        def update_audio_focus():
++            is_controls = (focus_state.get("pane", "controls") == "controls")
++            for i, btn in enumerate(focus_list):
++                if is_controls and i == focus_state["idx"]:
++                    btn.container_control.bgcolor = "#33FFFFFF" # Subtle highlight
++                else:
++                    btn.container_control.bgcolor = ft.Colors.TRANSPARENT
++            
++            # Trigger player UI update to redraw list highlights & auto-scroll
++            if audio_state:
++                update_player_ui()
++            else:
++                try: page.update()
++                except: pass
++            
++        update_audio_focus()
++        
++        def viewer_keyboard(e: ft.KeyboardEvent):
++            if e.key in ["Backspace", "Escape", "BrowserBack"]:
++                exit_player()
++                return
++                
++            pane = focus_state.get("pane", "controls")
++            
++            if pane == "controls":
++                if e.key == "Arrow Left":
++                    focus_state["idx"] = max(0, focus_state["idx"] - 1)
++                    update_audio_focus()
++                elif e.key == "Arrow Right":
++                    focus_state["idx"] = min(len(focus_list) - 1, focus_state["idx"] + 1)
++                    update_audio_focus()
++                elif e.key in ["Arrow Up", "Arrow Down"]:
++                    # Jump focus to the queue list
++                    if audio_state and len(audio_state.queue) > 0:
++                        focus_state["pane"] = "queue"
++                        focus_state["queue_idx"] = max(0, min(audio_state.current_index, len(audio_state.queue) - 1))
++                        update_audio_focus()
++                elif e.key in ["Enter", "Space", "MediaPlayPause", "Select", "Numpad Enter", "Gamepad Button A"]:
++                    btn = focus_list[focus_state["idx"]]
++                    if btn.on_click:
++                        btn.on_click(None)
++                        
++            elif pane == "queue":
++                if not audio_state or len(audio_state.queue) == 0:
++                    focus_state["pane"] = "controls"
++                    update_audio_focus()
++                    return
++                    
++                if e.key == "Arrow Up":
++                    focus_state["queue_idx"] = max(0, focus_state["queue_idx"] - 1)
++                    update_audio_focus()
++                elif e.key == "Arrow Down":
++                    focus_state["queue_idx"] = min(len(audio_state.queue) - 1, focus_state["queue_idx"] + 1)
++                    update_audio_focus()
++                elif e.key in ["Arrow Left", "Arrow Right"]:
++                    # Jump focus back to the control buttons
++                    focus_state["pane"] = "controls"
++                    update_audio_focus()
++                elif e.key in ["Enter", "Space", "Select", "Numpad Enter", "Gamepad Button A"]:
++                    # Play the selected track directly!
++                    target_idx = focus_state["queue_idx"]
++                    async def play_queue_item():
++                        try:
++                            await audio_state.play_index(target_idx)
++                        except Exception: pass
++                    page.run_task(play_queue_item)
++                    
++        page.session.store.set("keyboard_handler", viewer_keyboard)
++
+         bg_img = ft.Image(src=cover_img.src, fit="cover", opacity=0.15, expand=True)
+         focus_state["bg_img"] = bg_img
+ 
