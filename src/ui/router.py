@@ -118,8 +118,11 @@ class AppRouter:
                         except Exception:
                             pass
                         finally:
-                            self.page.session.store.set("_avatar_fetching", False)
-                            self.page.session.store.set("_avatar_checked", True)
+                            try:
+                                self.page.session.store.set("_avatar_fetching", False)
+                                self.page.session.store.set("_avatar_checked", True)
+                            except Exception:
+                                pass
                     self.page.run_task(refresh_profile_bg)
 
             # Mutate route safely to avoid infinite looping

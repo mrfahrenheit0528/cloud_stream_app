@@ -7,6 +7,22 @@ from services.onedrive_auth import initiate_device_flow, poll_device_token, fetc
 def login_view(page: ft.Page) -> ft.View:
     current_theme = page.session.store.get("theme_color") or ft.Colors.RED_700
 
+    def build_microsoft_logo():
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Container(width=8, height=8, bgcolor="#F25022"),
+                    ft.Container(width=8, height=8, bgcolor="#7FBA00"),
+                ], spacing=2, tight=True),
+                ft.Row([
+                    ft.Container(width=8, height=8, bgcolor="#00A4EF"),
+                    ft.Container(width=8, height=8, bgcolor="#FFB900"),
+                ], spacing=2, tight=True),
+            ], spacing=2, tight=True),
+            alignment=ft.Alignment(0, 0),
+            width=24, height=24
+        )
+
     async def on_login_click(e):
         # Reset the button state visually
         btn = e.control
@@ -177,11 +193,7 @@ def login_view(page: ft.Page) -> ft.View:
             btn.content = ft.Row(
                 alignment=ft.MainAxisAlignment.CENTER,
                 controls=[
-                    ft.Container(
-                        bgcolor="white", border_radius=12, width=24, height=24,
-                        alignment=ft.Alignment(0, 0),
-                        content=ft.Text("M", color=current_theme, weight=ft.FontWeight.BOLD, size=16)
-                    ),
+                    build_microsoft_logo(),
                     ft.Text("Sign in with OneDrive", size=18, weight=ft.FontWeight.W_600, color="white")
                 ]
             )
@@ -192,6 +204,7 @@ def login_view(page: ft.Page) -> ft.View:
 
     # The sign-in button — use ft.Button so it is natively D-pad focusable
     signin_btn = ft.Button(
+        width=340,
         autofocus=True,
         style=ft.ButtonStyle(
             bgcolor=current_theme,
@@ -205,13 +218,7 @@ def login_view(page: ft.Page) -> ft.View:
         content=ft.Row(
             alignment=ft.MainAxisAlignment.CENTER,
             controls=[
-                ft.Container(
-                    bgcolor="white",
-                    border_radius=12,
-                    width=24, height=24,
-                    alignment=ft.Alignment(0, 0),
-                    content=ft.Text("M", color=current_theme, weight=ft.FontWeight.BOLD, size=16)
-                ),
+                build_microsoft_logo(),
                 ft.Text("Sign in with OneDrive", size=18, weight=ft.FontWeight.W_600, color="white")
             ]
         ),
@@ -226,12 +233,11 @@ def login_view(page: ft.Page) -> ft.View:
             alignment=ft.MainAxisAlignment.CENTER,
             spacing=40,
             controls=[
-                ft.Container(
-                    bgcolor=current_theme,
-                    width=120, height=120,
-                    border_radius=60,
-                    alignment=ft.Alignment(0, 0),
-                    content=ft.Icon(ft.Icons.CLOUD_DONE_ROUNDED, size=60, color="white")
+                ft.Image(
+                    src="Logo.png",
+                    width=120,
+                    height=120,
+                    fit=ft.BoxFit.CONTAIN
                 ),
                 ft.Column(
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,

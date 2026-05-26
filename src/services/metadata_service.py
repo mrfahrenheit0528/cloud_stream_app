@@ -28,24 +28,45 @@ async def _download_partial_file(stream_url: str, chunk_size: int = 512000) -> b
     from services.onedrive_service import get_direct_stream_url_sync
     resolved_url = get_direct_stream_url_sync(stream_url)
     
-    req = urllib.request.Request(resolved_url)
-    req.add_header('Range', f'bytes=0-{chunk_size}')
-    req.add_header('User-Agent', 'Mozilla/5.0')
+    parsed = urllib.parse.urlparse(resolved_url)
+    domain = parsed.netloc
     
-    def fetch():
-        try:
-            with urllib.request.urlopen(req, timeout=8) as response:
-                return response.read()
-        except HTTPError as e:
-            # 206 Partial Content or 200 OK are both accepted
-            if e.code in (200, 206):
-                return e.read()
-            print(f"Failed to fetch partial file: {e.code}")
-            return None
-        except Exception as e:
-            print(f"Error fetching partial file: {e}")
-            return None
-            
+    is_sp = ".sharepoint.com" in domain.lower()
+    
+    if is_sp:
+        from services.onedrive_service import get_sharepoint_opener
+        opener = get_sharepoint_opener(domain)
+        req = urllib.request.Request(resolved_url)
+        req.add_header('Range', f'bytes=0-{chunk_size}')
+        def fetch():
+            try:
+                with opener.open(req, timeout=8) as response:
+                    return response.read()
+            except HTTPError as e:
+                if e.code in (200, 206):
+                    return e.read()
+                print(f"Failed to fetch partial SharePoint file: {e.code}")
+                return None
+            except Exception as e:
+                print(f"Error fetching partial SharePoint file: {e}")
+                return None
+    else:
+        req = urllib.request.Request(resolved_url)
+        req.add_header('Range', f'bytes=0-{chunk_size}')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        def fetch():
+            try:
+                with urllib.request.urlopen(req, timeout=8) as response:
+                    return response.read()
+            except HTTPError as e:
+                if e.code in (200, 206):
+                    return e.read()
+                print(f"Failed to fetch partial file: {e.code}")
+                return None
+            except Exception as e:
+                print(f"Error fetching partial file: {e}")
+                return None
+                
     return await asyncio.to_thread(fetch)
 
 async def get_audio_metadata(stream_url: str, file_id: str, original_filename: str):

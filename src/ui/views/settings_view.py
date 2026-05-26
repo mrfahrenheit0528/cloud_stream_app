@@ -242,6 +242,264 @@ def settings_view(page: ft.Page) -> ft.View:
         page.update()
         page.run_task(load_drive_folders, drive_history[-1])
 
+    async def open_phone_input():
+        # 1. Start background HTTP server
+        import urllib.parse
+        import http.server
+        import socket
+        import threading
+        
+        local_ip = "127.0.0.1"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+            
+        port = 8080
+        server = None
+        for p in range(8080, 8090):
+            try:
+                # Custom handler subclass to pass scope closures cleanly
+                class LocalInputHandler(http.server.BaseHTTPRequestHandler):
+                    def log_message(self, format, *args):
+                        pass
+                        
+                    def do_GET(self):
+                        parsed = urllib.parse.urlparse(self.path)
+                        if parsed.path == "/submit":
+                            query = urllib.parse.parse_qs(parsed.query)
+                            url_val = query.get("url", [""])[0].strip()
+                            
+                            # Update TV text fields
+                            folder_field.value = url_val
+                            modal_folder_field.value = url_val
+                            
+                            # Success response
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/json")
+                            self.send_header("Access-Control-Allow-Origin", "*")
+                            self.end_headers()
+                            self.wfile.write(b'{"status":"success"}')
+                            
+                            # Trigger update and close dialog safely on the main thread
+                            async def handle_url_received():
+                                try:
+                                    # 1. Close phone dialog first so the TV UI updates immediately
+                                    phone_dialog.open = False
+                                    try:
+                                        phone_dialog.update()
+                                    except:
+                                        pass
+                                    
+                                    # 2. Update folder fields safely
+                                    folder_field.value = url_val
+                                    try:
+                                        folder_field.update()
+                                    except:
+                                        pass
+                                    
+                                    modal_folder_field.value = url_val
+                                    try:
+                                        modal_folder_field.update()
+                                    except:
+                                        pass
+                                    
+                                    # 3. Update main page
+                                    try:
+                                        page.update()
+                                    except:
+                                        pass
+                                    
+                                    # 4. Show success premium Toast/SnackBar
+                                    try:
+                                        page.snack_bar = ft.SnackBar(
+                                            content=ft.Text("Folder Link Linked Successfully!", color="white", weight=ft.FontWeight.BOLD),
+                                            bgcolor=ft.Colors.GREEN_800
+                                        )
+                                        page.snack_bar.open = True
+                                        page.update()
+                                    except:
+                                        pass
+                                    
+                                    # 5. Cleanly shut down HTTP server
+                                    nonlocal server
+                                    if server:
+                                        server.shutdown()
+                                        server = None
+                                except Exception as ex:
+                                    import traceback
+                                    print(f"Error in handle_url_received: {ex}")
+                                    traceback.print_exc()
+                                
+                            page.run_task(handle_url_received)
+                            return
+                            
+                        # Serve the premium mobile page
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.end_headers()
+                        
+                        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>E-stream'o Remote Input</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{
+            background-color: #0c0c14;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }}
+        .card {{
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            padding: 30px;
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+        }}
+        h2 {{ margin-top: 0; font-size: 28px; color: {current_theme}; font-weight: 900; letter-spacing: 1px; }}
+        p {{ color: #888899; font-size: 14px; line-height: 1.5; margin-bottom: 25px; }}
+        textarea {{
+            width: 100%;
+            height: 120px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            color: white;
+            padding: 12px;
+            font-size: 14px;
+            box-sizing: border-box;
+            resize: none;
+            margin-bottom: 20px;
+            outline: none;
+            transition: border-color 0.2s;
+        }}
+        textarea:focus {{ border-color: {current_theme}; }}
+        button {{
+            background: linear-gradient(135deg, {current_theme}, #1A1A2E);
+            border: none;
+            color: white;
+            padding: 14px 28px;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }}
+        button:active {{ transform: scale(0.98); }}
+        .success {{ color: #22c55e; font-weight: bold; margin-top: 15px; display: none; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>E-stream'o</h2>
+        <p>Paste your OneDrive or SharePoint guest folder sharing link below to instantly send it to your Android TV.</p>
+        <textarea id="url" placeholder="https://1drv.ms/f/s!A... or https://sharepoint.com/..."></textarea>
+        <button onclick="send()">Send to TV</button>
+        <div id="msg" class="success">Link Sent! You can close this tab now.</div>
+    </div>
+    <script>
+        async function send() {{
+            const url = document.getElementById('url').value.trim();
+            if(!url) return alert('Please paste a link first!');
+            try {{
+                const res = await fetch('/submit?url=' + encodeURIComponent(url));
+                const data = await res.json();
+                if(data.status === 'success') {{
+                    document.getElementById('msg').style.display = 'block';
+                    document.getElementById('url').value = '';
+                }} else {{
+                    alert('Failed to send link.');
+                }}
+            }} catch(e) {{
+                alert('Connection error: ' + e);
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+                        self.wfile.write(html_content.encode("utf-8"))
+                        
+                server = http.server.HTTPServer(("0.0.0.0", p), LocalInputHandler)
+                port = p
+                break
+            except OSError:
+                continue
+                
+        if not server:
+            return
+            
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        
+        local_web_url = f"http://{local_ip}:{port}"
+        qr_src = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={urllib.parse.quote(local_web_url)}&bgcolor=111111&color=ffffff&margin=2"
+        
+        def close_phone_dialog(e):
+            nonlocal server
+            phone_dialog.open = False
+            page.update()
+            if server:
+                server.shutdown()
+                server = None
+                
+        phone_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Paste Link from Phone", weight=ft.FontWeight.BOLD, size=20, text_align=ft.TextAlign.CENTER),
+            content=ft.Column([
+                ft.Row([
+                    ft.Column([
+                        ft.Text("1. Scan this QR code or type this URL on your phone/computer:", color="white70", size=13),
+                        ft.Container(
+                            bgcolor="#1E1E1E",
+                            border_radius=8,
+                            padding=ft.Padding(14, 8, 14, 8),
+                            content=ft.Text(local_web_url, size=16, weight=ft.FontWeight.BOLD, color=current_theme)
+                        ),
+                        ft.Text("2. Paste your OneDrive/SharePoint sharing link.", color="white70", size=13),
+                        ft.Text("3. Tap 'Send to TV' to link instantly.", color="white70", size=13),
+                    ], spacing=10, expand=True),
+                    ft.Column([
+                        ft.Container(
+                            bgcolor="white",
+                            border_radius=8,
+                            padding=4,
+                            content=ft.Image(src=qr_src, width=140, height=140, fit=ft.BoxFit.CONTAIN)
+                        )
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                ], spacing=20, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Divider(color="#2A2A3E", height=1),
+                ft.Row([
+                    ft.ProgressRing(width=16, height=16, color=current_theme, stroke_width=2),
+                    ft.Text("  Waiting for folder link from phone...", color="white54", size=13, italic=True)
+                ], alignment=ft.MainAxisAlignment.CENTER)
+            ], tight=True, spacing=14),
+            actions=[
+                ft.TextButton("Cancel", on_click=close_phone_dialog)
+            ]
+        )
+        
+        page.overlay.append(phone_dialog)
+        phone_dialog.open = True
+        page.update()
+
 
     # ── Theme swatches ───────────────────────────────────────────────────────
     selected_color = current_theme
@@ -316,6 +574,30 @@ def settings_view(page: ft.Page) -> ft.View:
             color="#66FFFFFF", offset=ft.Offset(0, 0),
         ) if focused else None
         try: browse_wrap.update()
+        except Exception: pass
+
+    _phone_inner = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.PHONELINK_SETUP_ROUNDED, color="white"), ft.Text("Link from Phone", color="white", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
+        bgcolor="#222222",
+        height=56,
+        border_radius=10,
+        padding=15,
+    )
+    phone_wrap = ft.Container(
+        content=_phone_inner,
+        border=_UNFOCUSED_BORDER,
+        border_radius=12,
+        animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+        on_click=lambda e: page.run_task(open_phone_input),
+    )
+
+    def phone_focus(focused: bool):
+        phone_wrap.border = _focused_border("#FFFFFF") if focused else _UNFOCUSED_BORDER
+        phone_wrap.shadow = ft.BoxShadow(
+            spread_radius=0, blur_radius=18,
+            color="#66FFFFFF", offset=ft.Offset(0, 0),
+        ) if focused else None
+        try: phone_wrap.update()
         except Exception: pass
 
     _save_inner = ft.Container(
@@ -471,12 +753,12 @@ def settings_view(page: ft.Page) -> ft.View:
     # ── 2D Keyboard Focus Grid ───────────────────────────────────────────────
     # Row 0: [edit_name_btn]
     # Row 1: color swatches
-    # Row 2: [edit_folder_btn, browse_wrap]
+    # Row 2: [edit_folder_btn, browse_wrap, phone_wrap]
     # Row 3: [save_wrap, disconnect_wrap]
     grid = [
         [edit_name_btn],
         color_row.controls,
-        [edit_folder_btn, browse_wrap],
+        [edit_folder_btn, browse_wrap, phone_wrap],
         [save_wrap, disconnect_wrap],
     ]
     focus_state = {"r": 0, "c": 0}
@@ -484,6 +766,7 @@ def settings_view(page: ft.Page) -> ft.View:
     # Map focusable controls that have custom focus handlers
     _btn_focus_handlers = {
         id(browse_wrap): browse_focus,
+        id(phone_wrap): phone_focus,
         id(save_wrap): save_focus,
         id(disconnect_wrap): disconnect_focus,
     }
@@ -663,7 +946,7 @@ def settings_view(page: ft.Page) -> ft.View:
                     ]),
                     ft.Text("Select the root folder in OneDrive containing your media library.", color="gray"),
                     ft.Divider(height=10, color="transparent"),
-                    ft.Row(controls=[folder_field, edit_folder_btn, browse_wrap]),
+                    ft.Row(controls=[folder_field, edit_folder_btn, browse_wrap, phone_wrap]),
                 ]),
             ),
 

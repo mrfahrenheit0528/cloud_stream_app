@@ -352,8 +352,15 @@ def home_view(page: ft.Page) -> ft.View:
         import uuid
         row_key = f"shelf_{uuid.uuid4()}"
         
-        # Limit to max 25 items per shelf to keep TV render times and JSON communication bridge snappier
-        capped_items = items_list[:25]
+        # Dynamic category check: Songs require background caching which is heavy, so we keep a 25-item cap.
+        # Pure photos or pure videos require no heavy pre-fetching and can safely load up to 150 items.
+        is_pure_video = all(item.get("mimeType", "").startswith("video/") for item in items_list) if items_list else False
+        is_pure_photo = all(item.get("mimeType", "").startswith("image/") for item in items_list) if items_list else False
+        
+        if is_pure_video or is_pure_photo:
+            capped_items = items_list[:150]
+        else:
+            capped_items = items_list[:20]
         
         horizontal_row = ft.Row(
             scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
@@ -531,7 +538,7 @@ def home_view(page: ft.Page) -> ft.View:
             return
             
         # Add a top spacer so the first shelf sits entirely below the cinematic fade zone
-        shelf_container.controls.append(ft.Container(height=35))
+        shelf_container.controls.append(ft.Container(height=45))
             
         def extract_dims(m):
             w, h = 0, 0
@@ -663,8 +670,17 @@ def home_view(page: ft.Page) -> ft.View:
             # --- START PERSISTENT BACKGROUND PRE-FETCH WORKER ---
             # Sequentially fetches and writes metadata/album art for ALL tracks in the folder
             # in the background, making it highly lightweight and completely unnoticeable!
-            if not page.session.store.get("prefetch_running"):
-                page.session.store.set("prefetch_running", True)
+            # Safeguard prefetch check against session destruction during fast skips
+            try:
+                is_running = page.session.store.get("prefetch_running")
+            except Exception:
+                is_running = True # Avoid scheduling if the session is currently tearing down/invalid
+
+            if not is_running:
+                try:
+                    page.session.store.set("prefetch_running", True)
+                except Exception:
+                    pass
                 
                 async def run_persistent_metadata_prefetch():
                     try:
@@ -678,11 +694,17 @@ def home_view(page: ft.Page) -> ft.View:
                                     all_audio_tracks.append(item)
                                     
                         if not all_audio_tracks:
-                            page.session.store.set("prefetch_running", False)
+                            try:
+                                page.session.store.set("prefetch_running", False)
+                            except Exception: pass
                             return
                             
                         for track in all_audio_tracks:
-                            if not page.session.store.get("onedrive_access_token"):
+                            try:
+                                token = page.session.store.get("onedrive_access_token")
+                                if not token:
+                                    break
+                            except Exception:
                                 break
                             
                             from services.metadata_service import get_audio_metadata
@@ -700,20 +722,25 @@ def home_view(page: ft.Page) -> ft.View:
                             # Live player queue hydration:
                             # If the music player queue contains this track, update it in-place and refresh the player UI!
                             if changed:
-                                audio_state = page.session.store.get("audio_state")
-                                if audio_state and audio_state.queue:
-                                    for q_track in audio_state.queue:
-                                        if q_track["id"] == track["id"]:
-                                            q_track["name"] = track["name"]
-                                            q_track["url"] = track["url"]
-                                            audio_state.notify_ui()
-                                            break
+                                try:
+                                    audio_state = page.session.store.get("audio_state")
+                                    if audio_state and audio_state.queue:
+                                        for q_track in audio_state.queue:
+                                            if q_track["id"] == track["id"]:
+                                                q_track["name"] = track["name"]
+                                                q_track["url"] = track["url"]
+                                                audio_state.notify_ui()
+                                                break
+                                except Exception: pass
                                 
                             await asyncio.sleep(0.1) # Tiny sleep to avoid CPU thread starvation
                     except Exception:
                         pass
                     finally:
-                        page.session.store.set("prefetch_running", False)
+                        try:
+                            page.session.store.set("prefetch_running", False)
+                        except Exception:
+                            pass
                         
                 page.run_task(run_persistent_metadata_prefetch)
         except Exception:
@@ -798,9 +825,15 @@ def home_view(page: ft.Page) -> ft.View:
     page.session.store.set("keyboard_handler", home_keyboard)
     page.session.store.set("home_keyboard_handler", home_keyboard)  # Persistent key for router cache restoration
         
+    async def safe_load_dashboard_content():
+        try:
+            await load_dashboard_content()
+        except Exception as ex:
+            print(f"Safe dashboard loader caught background exception: {ex}")
+
     # Kick off the data fetch in the background only if the user is actually looking at the dashboard
     if page.route == "/home":
-        page.run_task(load_dashboard_content)
+        page.run_task(safe_load_dashboard_content)
 
     # Apply a shader mask to the shelves to create a cinematic fade at the top
     masked_shelves = ft.ShaderMask(
@@ -810,7 +843,7 @@ def home_view(page: ft.Page) -> ft.View:
             begin=ft.Alignment.TOP_CENTER,
             end=ft.Alignment.BOTTOM_CENTER,
             colors=["#00000000", "#FF000000", "#FF000000"],
-            stops=[0.0, 0.08, 1.0] # Fades from transparent to opaque over the top 8%
+            stops=[0.0, 0.32, 1.0] # Fades from transparent to opaque over the top 32%
         ),
     )
 
@@ -835,7 +868,7 @@ def home_view(page: ft.Page) -> ft.View:
             ft.Container(
                 padding=ft.Padding(left=40, right=40, top=0, bottom=20),
                 content=masked_shelves,
-                left=0, right=0, top=260, bottom=0
+                left=0, right=0, top=220, bottom=0
             )
         ]
     )
