@@ -573,8 +573,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         # Since stream URLs are direct CDN links (no async resolution needed), this is instantaneous.
         _media_extras = {
             "cache": "yes",
-            "demuxer-max-bytes": "1000000000",
-            "demuxer-max-back-bytes": "100000000",
+            "demuxer-max-bytes": "67108864",
+            "demuxer-max-back-bytes": "16777216",
             "hwdec": "auto",
             "sub-font-size": "36",
             "sub-scale": "0.8",
@@ -594,8 +594,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                 "input-default-bindings": "no",
                 "input-vo-keyboard": "no",
                 "cache": "yes",
-                "demuxer-max-bytes": "1000000000",
-                "demuxer-max-back-bytes": "100000000",
+                "demuxer-max-bytes": "67108864",
+                "demuxer-max-back-bytes": "16777216",
                 "hwdec": "auto",
             }
         )
@@ -620,6 +620,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             (our jump_to call, mpv's internal key bindings, playlist auto-advance, etc.).
             Keeps Python state in sync with the native player."""
             nonlocal current_queue_idx
+            is_skipping[0] = True
+            track_playing_started[0] = False
             try:
                 raw = getattr(e, "data", None)
                 if raw is None:
@@ -661,9 +663,15 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                     await wake_controls()
             except Exception as ex:
                 print(f"[on_track_changed] error: {ex}")
+            finally:
+                # High-fidelity transition lock: hold skipping status for 2 seconds to let the underlying player fully buffer and start new track
+                await asyncio.sleep(2.0)
+                is_skipping[0] = False
 
         async def _do_in_place_skip(target_vid: dict):
             """In-place skip via jump_to() on the pre-built full playlist."""
+            is_skipping[0] = True
+            track_playing_started[0] = False
             try:
                 res = video_engine.jump_to(current_queue_idx)
                 if asyncio.iscoroutine(res): await res
@@ -698,11 +706,15 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             await wake_controls()
 
         is_transitioning = [False]
+        is_skipping = [False]
+        track_playing_started = [False]
 
         async def on_next_video(e=None):
             if is_transitioning[0]:
                 return
             is_transitioning[0] = True
+            is_skipping[0] = True
+            track_playing_started[0] = False
             try:
                 nonlocal current_queue_idx
                 # Save position of the current video before skipping
@@ -741,6 +753,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             if is_transitioning[0]:
                 return
             is_transitioning[0] = True
+            is_skipping[0] = True
+            track_playing_started[0] = False
             try:
                 nonlocal current_queue_idx
                 # Save position of the current video before skipping
@@ -1327,19 +1341,18 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                     if save_ticks >= 10:
                         save_ticks = 0
                         try:
-                            pos = await video_engine.get_current_position()
-                            dur = await video_engine.get_duration()
-                            if pos is not None and dur is not None:
-                                pos_ms = pos.in_milliseconds if hasattr(pos, "in_milliseconds") else int(pos)
-                                dur_ms = dur.in_milliseconds if hasattr(dur, "in_milliseconds") else int(dur)
-                                current_id = video_queue[current_queue_idx]["id"]
-                                
-
+                            if track_playing_started[0]:
+                                pos = await video_engine.get_current_position()
+                                dur = await video_engine.get_duration()
+                                if pos is not None and dur is not None:
+                                    pos_ms = pos.in_milliseconds if hasattr(pos, "in_milliseconds") else int(pos)
+                                    dur_ms = dur.in_milliseconds if hasattr(dur, "in_milliseconds") else int(dur)
+                                    current_id = video_queue[current_queue_idx]["id"]
                                     
-                                if dur_ms > 0 and pos_ms > dur_ms - 15000:
-                                    save_playback_position(current_id, 0)
-                                elif pos_ms > 10000:
-                                    save_playback_position(current_id, pos_ms)
+                                    if dur_ms > 0 and pos_ms > dur_ms - 15000:
+                                        save_playback_position(current_id, 0)
+                                    elif pos_ms > 10000:
+                                        save_playback_position(current_id, pos_ms)
                         except Exception:
                             pass
                         
@@ -1350,8 +1363,17 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                         if pos is not None and dur is not None:
                             pos_ms = pos.in_milliseconds if hasattr(pos, "in_milliseconds") else int(pos)
                             dur_ms = dur.in_milliseconds if hasattr(dur, "in_milliseconds") else int(dur)
-                            if dur_ms > 0 and pos_ms >= dur_ms - 1500:
-                                page.run_task(on_next_video)
+                            if dur_ms > 0:
+                                # A track has playing started if we see any position that is not the stale completion position of the previous track
+                                if not track_playing_started[0]:
+                                    if pos_ms < dur_ms - 2000 or pos_ms < 1000 or pos_ms == 0:
+                                        track_playing_started[0] = True
+                                        
+                                if track_playing_started[0] and not is_skipping[0] and not is_transitioning[0]:
+                                    if pos_ms > 2000 and pos_ms >= dur_ms - 1500:
+                                        is_skipping[0] = True
+                                        track_playing_started[0] = False
+                                        page.run_task(on_next_video)
                     except: pass
 
                     # If paused, keep controls visible!
