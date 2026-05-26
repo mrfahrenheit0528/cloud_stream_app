@@ -17,13 +17,15 @@
 </div>
 
 ---
+##### **Disclaimer:** This project is not affiliated with or endorsed by Microsoft.
+---
 
 ## ✨ Features
 
 - 🎬 **Stream videos** directly from your OneDrive or SharePoint shared folder — no re-uploading needed
 - 🎵 **Music player** with shuffle, loop, album art, and a full-featured D-pad navigable queue
 - 🖼️ **Photo viewer** with fullscreen support
-- 📺 **Android TV optimized** — complete D-pad remote control navigation, cinematic auto-hide HUD, and zero lag
+- 📺 **Android TV optimized** — complete D-pad remote control navigation, cinematic auto-hide HUD
 - 🔗 **"Link from Phone" onboarding** — scan a QR code to wirelessly paste your folder URL from your phone instead of typing on a TV keyboard
 - 💾 **Playback memory** — videos resume from where you left off
 - 🎨 **Customizable accent colors** — choose from 6 premium theme colors in settings
