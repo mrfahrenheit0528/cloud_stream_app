@@ -52,10 +52,9 @@ Head to the [**Releases page**](https://github.com/mrfahrenheit0528/cloud_stream
 1. **Download** `E-streamo-android.apk` from the [Releases page](https://github.com/mrfahrenheit0528/cloud_stream_app/releases/latest)
 2. **Transfer to TV** using one of:
    - A USB flash drive + a file manager app (e.g. *FX File Explorer*)
-   - The [Send Files to TV](https://play.google.com/store/apps/details?id=com.yablio.sendfilestotv) app (phone + TV)
+   - The [LocalSend](https://play.google.com/store/apps/details?id=org.localsend.localsend_app) app (phone + TV)
 3. **Enable Unknown Sources** in your TV's security settings, then install the APK
-4. **Install a browser** on your TV (e.g. *TV Bro*, *JioPages*, or *Puffin TV Browser*) — required for the Microsoft sign-in flow, since most Android TVs don't include one
-5. **Launch E-stream'o**, sign in with your Microsoft account, and paste your OneDrive/SharePoint folder link
+4. **Launch E-stream'o**, sign in with your Microsoft account, and paste your OneDrive/SharePoint folder link
 
 > **Tip:** Use **"Link from Phone"** in Settings to wirelessly send your sharing URL directly from your phone — no remote typing needed!
 
