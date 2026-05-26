@@ -823,7 +823,10 @@ def settings_view(page: ft.Page) -> ft.View:
                 res = main_scroll_col.scroll_to(offset=0, duration=300)
                 
             if hasattr(res, "__await__"):
-                await res
+                async def safe_scroll(co):
+                    try: await co
+                    except: pass
+                page.run_task(safe_scroll, res)
         except Exception: pass
 
         try:

@@ -358,9 +358,9 @@ def home_view(page: ft.Page) -> ft.View:
         is_pure_photo = all(item.get("mimeType", "").startswith("image/") for item in items_list) if items_list else False
         
         if is_pure_video or is_pure_photo:
-            capped_items = items_list[:150]
+            capped_items = items_list[:50]
         else:
-            capped_items = items_list[:20]
+            capped_items = items_list[:15]
         
         horizontal_row = ft.Row(
             scroll=ft.ScrollMode.HIDDEN, # Hide scrollbars for a cleaner UI
@@ -794,17 +794,23 @@ def home_view(page: ft.Page) -> ft.View:
             new_node["set_focus"](True)
         except Exception: pass
         
+        async def safe_scroll(co):
+            try:
+                await co
+            except Exception:
+                pass
+
         try:
             if r > 0:
                 target_y = max(0, (r - 1) * 180)
                 res = shelf_container.scroll_to(offset=target_y, duration=300)
-                if asyncio.iscoroutine(res):
-                    await res
+                if hasattr(res, "__await__"):
+                    page.run_task(safe_scroll, res)
                 # Do NOT call shelf_container.update() here — scroll_to handles the repaint
             elif r == 0:
                 res = shelf_container.scroll_to(offset=0, duration=300)
-                if asyncio.iscoroutine(res):
-                    await res
+                if hasattr(res, "__await__"):
+                    page.run_task(safe_scroll, res)
         except Exception:
             pass
             
@@ -814,10 +820,7 @@ def home_view(page: ft.Page) -> ft.View:
                 target_x = max(0, (c - 1) * (card_w + 12))
                 row = new_node["horizontal_row"]
                 res = row.scroll_to(offset=target_x, duration=300)
-                if asyncio.iscoroutine(res):
-                    async def safe_scroll(co):
-                        try: await co
-                        except Exception: pass
+                if hasattr(res, "__await__"):
                     page.run_task(safe_scroll, res)
                 # Do NOT call row.update() — scroll_to handles its own repaint
             except Exception: pass

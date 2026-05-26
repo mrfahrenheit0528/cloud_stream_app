@@ -522,8 +522,9 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         appbar = None 
         if hasattr(page, 'window_full_screen'):
             page.window_full_screen = True
-        elif hasattr(page, 'window'):
-            page.window.full_screen = True
+        if hasattr(page, 'window') and page.window:
+            try: page.window.full_screen = True
+            except: pass
         saved_pos = load_playback_position(item_data["id"])
         has_saved_pos = saved_pos > 10000
 
@@ -825,8 +826,9 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         def exit_fullscreen(e):
             if hasattr(page, 'window_full_screen'):
                 page.window_full_screen = False
-            elif hasattr(page, 'window'):
-                page.window.full_screen = False
+            if hasattr(page, 'window') and page.window:
+                try: page.window.full_screen = False
+                except: pass
             
             async def save_and_go():
                 try:
@@ -1256,9 +1258,9 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                     update_focus_all()
                 elif e.key in ["Enter", "Space", "Select", "Numpad Enter", "Gamepad Button A"]:
                     if focus_state["idx"] == 0:
-                        await do_resume()
+                        page.run_task(do_resume)
                     else:
-                        await do_restart()
+                        page.run_task(do_restart)
                 return
  
             if e.key == "Arrow Up":
@@ -1283,24 +1285,24 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                 elif e.key in ["Enter", "Space", "Select", "Numpad Enter", "Gamepad Button A"]:
                     idx = focus_state["idx"]
                     if idx == 0:
-                        await on_prev_video()
+                        page.run_task(on_prev_video)
                     elif idx == 1:
-                        await on_rewind_large()
+                        page.run_task(on_rewind_large)
                     elif idx == 2:
-                        await on_rewind_small()
+                        page.run_task(on_rewind_small)
                     elif idx == 3:
-                        await on_play_pause()
+                        page.run_task(on_play_pause)
                     elif idx == 4:
-                        await on_forward_small()
+                        page.run_task(on_forward_small)
                     elif idx == 5:
-                        await on_forward_large()
+                        page.run_task(on_forward_large)
                     elif idx == 6:
-                        await on_next_video()
+                        page.run_task(on_next_video)
                     elif idx == 7:
-                        await on_toggle_shuffle()
+                        page.run_task(on_toggle_shuffle)
             
             if e.key in ["MediaPlayPause", "Media Play Pause"]:
-                await on_play_pause()
+                page.run_task(on_play_pause)
                     
         page.session.store.set("keyboard_handler", viewer_keyboard)
  

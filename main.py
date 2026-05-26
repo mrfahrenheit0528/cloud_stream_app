@@ -58,7 +58,8 @@ def main(page: ft.Page):
         def on_keyboard(e: ft.KeyboardEvent):
             nonlocal last_key_time
             now = time.time()
-            if now - last_key_time < 0.15:
+            # TV-optimized low latency: Debounce down to 50ms to handle rapid TV remote scrolls smoothly
+            if now - last_key_time < 0.05:
                 return
             last_key_time = now
             

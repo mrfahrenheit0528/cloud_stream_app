@@ -195,8 +195,9 @@ class AppRouter:
         # Ensure we always exit fullscreen mode when backing out of the Media Viewer
         if hasattr(self.page, 'window_full_screen'):
             self.page.window_full_screen = False
-        elif hasattr(self.page, 'window'):
-            self.page.window.full_screen = False
+        if hasattr(self.page, 'window') and self.page.window:
+            try: self.page.window.full_screen = False
+            except: pass
             
         self.page.views.pop()
         top_view = self.page.views[-1]
