@@ -536,17 +536,20 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         
         def rebuild_queue():
             nonlocal video_queue, current_queue_idx
-            video_queue = list(video_list)
-            current_queue_idx = 0
-            for idx, vid in enumerate(video_queue):
+            # Find the clicked item's natural index in the sequential list
+            clicked_idx = 0
+            for idx, vid in enumerate(video_list):
                 if vid["id"] == item_data["id"]:
-                    current_queue_idx = idx
+                    clicked_idx = idx
                     break
+            # Shift the queue cyclically so the clicked item sits at index 0, followed sequentially by subsequent items
+            video_queue = video_list[clicked_idx:] + video_list[:clicked_idx]
+            current_queue_idx = 0
             
         rebuild_queue()
         
-        played_indices = {current_queue_idx}
-        play_history = [current_queue_idx]
+        played_indices = {0}
+        play_history = [0]
 
         # Centered premium overlay video title
         video_title_text = ft.Text(
@@ -607,7 +610,7 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         video_engine = fv.Video(
             key=f"video_player_{item_data['id']}",
             playlist=full_playlist,
-            autoplay=False,  # Manually managed at startup to preserve sequential playlist indexing
+            autoplay=not has_saved_pos,
             expand=True,
             show_controls=False,
             configuration=video_config,
@@ -623,8 +626,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             (our jump_to call, mpv's internal key bindings, playlist auto-advance, etc.).
             Keeps Python state in sync with the native player."""
             nonlocal current_queue_idx
-            if not player_initialized[0]:
-                return
             is_skipping[0] = True
             track_playing_started[0] = False
             try:
@@ -713,7 +714,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         is_transitioning = [False]
         is_skipping = [False]
         track_playing_started = [False]
-        player_initialized = [False]
 
         async def on_next_video(e=None):
             if is_transitioning[0]:
@@ -885,7 +885,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             top=20,
             left=20,
             animate_opacity=400,
-            opacity=1
+            opacity=1,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         # Action callbacks for the HUD buttons
@@ -953,7 +957,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_prev_video),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_rewind_large = ft.IconButton(
@@ -962,7 +970,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_rewind_large),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_rewind_small = ft.IconButton(
@@ -971,7 +983,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_rewind_small),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_play = ft.IconButton(
@@ -980,7 +996,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_play_pause),
             width=60,
-            height=60
+            height=60,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_forward_small = ft.IconButton(
@@ -989,7 +1009,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_forward_small),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_forward_large = ft.IconButton(
@@ -998,7 +1022,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_forward_large),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         btn_next = ft.IconButton(
@@ -1007,7 +1035,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_next_video),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         
         is_sp_shuffled = page.session.store.get("video_shuffle_enabled") or False
@@ -1017,7 +1049,11 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             icon_color="white",
             on_click=lambda e: page.run_task(on_toggle_shuffle),
             width=50,
-            height=50
+            height=50,
+            focus_color=ft.Colors.TRANSPARENT,
+            highlight_color=ft.Colors.TRANSPARENT,
+            hover_color=ft.Colors.TRANSPARENT,
+            splash_color=ft.Colors.TRANSPARENT
         )
         shuffle_dot = ft.Container(
             width=5,
@@ -1264,8 +1300,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                 exit_fullscreen(None)
                 return
                 
-            if woke and e.key in ["Arrow Left", "Arrow Right", "Arrow Up", "Arrow Down"]:
-                return  # Consume the keypress only to wake HUD, don't execute navigation action immediately
+            if woke and e.key in ["Arrow Left", "Arrow Right", "Arrow Up", "Arrow Down", "Enter", "Space", "Select", "Numpad Enter", "Gamepad Button A"]:
+                return  # Consume the keypress only to wake HUD, don't execute action or navigation immediately
                 
             area = focus_state["focus_area"]
             
@@ -1409,32 +1445,19 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                                 control_bar.update()
                                 video_title_container.update()
                             except: pass
+                            
+                            # Wait for the 400ms fade-out animation to completely finish before updating focus
+                            await asyncio.sleep(0.45)
+                            
+                            # Reset D-pad focus highlight to the Pause button (index 3) once controls are fully hidden
+                            focus_state["focus_area"] = "hud"
+                            focus_state["idx"] = 3
+                            update_focus_all()
                 except Exception:
                     # Session or page destroyed, break loop cleanly!
                     break
                     
         page.run_task(video_idle_loop)
-        
-        async def start_playback():
-            try:
-                # Settle for 150ms before loading the selected track to prevent native canvas conflicts
-                await asyncio.sleep(0.15)
-                
-                if current_queue_idx > 0:
-                    player_initialized[0] = True
-                    res = video_engine.jump_to(current_queue_idx)
-                    if asyncio.iscoroutine(res): await res
-                else:
-                    player_initialized[0] = True
-                
-                if not has_saved_pos:
-                    res = video_engine.play()
-                    if asyncio.iscoroutine(res): await res
-            except Exception as ex:
-                print(f"[start_playback] error: {ex}")
-                player_initialized[0] = True
-                
-        page.run_task(start_playback)
         
         player = ft.Stack([
             video_container,

@@ -604,7 +604,7 @@ def settings_view(page: ft.Page) -> ft.View:
         content=ft.Row([ft.Icon(ft.Icons.SAVE_ROUNDED, color="white"), ft.Text("Save Settings", color="white", weight=ft.FontWeight.BOLD)], alignment=ft.MainAxisAlignment.CENTER),
         bgcolor=ft.Colors.PRIMARY,
         height=56,
-        width=220,
+        width=240,
         border_radius=10,
         padding=15,
     )
@@ -625,9 +625,40 @@ def settings_view(page: ft.Page) -> ft.View:
         try: save_wrap.update()
         except Exception: pass
 
+    _restart_inner = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.RESTART_ALT_ROUNDED, color="white"), ft.Text("Restart App", color="white", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
+        height=56,
+        width=240,
+        border_radius=10,
+        border=ft.Border(
+            top=ft.BorderSide(2, "white30"),
+            bottom=ft.BorderSide(2, "white30"),
+            left=ft.BorderSide(2, "white30"),
+            right=ft.BorderSide(2, "white30"),
+        ),
+        padding=15,
+    )
+    restart_wrap = ft.Container(
+        content=_restart_inner,
+        border=_UNFOCUSED_BORDER,
+        border_radius=12,
+        animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+        on_click=None,
+    )
+
+    def restart_focus(focused: bool):
+        restart_wrap.border = _focused_border("#FFFFFF") if focused else _UNFOCUSED_BORDER
+        restart_wrap.shadow = ft.BoxShadow(
+            spread_radius=0, blur_radius=20,
+            color="#88FFFFFF", offset=ft.Offset(0, 0),
+        ) if focused else None
+        try: restart_wrap.update()
+        except Exception: pass
+
     _disconnect_inner = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.LOGOUT_ROUNDED, color="red"), ft.Text("Disconnect OneDrive", color="red", weight=ft.FontWeight.W_600)], alignment=ft.MainAxisAlignment.CENTER),
         height=56,
+        width=240,
         border_radius=10,
         border=ft.Border(
             top=ft.BorderSide(2, "red"),
@@ -750,16 +781,108 @@ def settings_view(page: ft.Page) -> ft.View:
 
     disconnect_wrap.on_click = confirm_disconnect
 
+    async def perform_restart(e):
+        restart_dialog.open = False
+        page.update()
+        
+        # Show a premium glassmorphic re-initializing SnackBar
+        try:
+            page.snack_bar = ft.SnackBar(
+                content=ft.Row([
+                    ft.ProgressRing(width=16, height=16, color="white", stroke_width=2),
+                    ft.Text("  Re-initializing application...")
+                ]),
+                bgcolor=selected_color,
+                duration=1500
+            )
+            page.snack_bar.open = True
+            page.update()
+        except: pass
+        
+        await asyncio.sleep(0.5)
+        
+        try:
+            # 1. Clear active session memory
+            page.session.store.clear()
+            
+            # 2. Re-read persistent preferences and tokens from disk
+            from config import get_persistent_data_dir
+            token_path = os.path.join(get_persistent_data_dir(), "estreamo_token.json")
+            prefs_path = os.path.join(get_persistent_data_dir(), "estreamo_prefs.json")
+            
+            # Re-load token cache
+            if os.path.exists(token_path):
+                try:
+                    with open(token_path, "r", encoding="utf-8") as f:
+                        t_data = json.load(f)
+                        if t_data.get("access_token"):
+                            page.session.store.set("onedrive_access_token", t_data["access_token"])
+                        if t_data.get("refresh_token"):
+                            page.session.store.set("onedrive_refresh_token", t_data["refresh_token"])
+                except: pass
+                
+            # Re-load persistent preferences
+            if os.path.exists(prefs_path):
+                try:
+                    with open(prefs_path, "r", encoding="utf-8") as f:
+                        prefs = json.load(f)
+                        if prefs.get("user_display_name"):
+                            page.session.store.set("user_display_name", prefs["user_display_name"])
+                        if prefs.get("onedrive_folder_id"):
+                            page.session.store.set("onedrive_folder_id", prefs["onedrive_folder_id"])
+                        if prefs.get("theme_color"):
+                            page.session.store.set("theme_color", prefs["theme_color"])
+                            page.theme = ft.Theme(color_scheme_seed=prefs["theme_color"])
+                except: pass
+            
+            # 3. Cleanly redirect back to landing route to reconstruct the dashboard from scratch
+            page.session.store.set("home_needs_refresh", True)
+            page.views.clear()
+            page.go("/")
+        except Exception as ex:
+            print(f"Error in soft restart: {ex}")
+            # Fallback: force hard restart
+            try:
+                import sys
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            except:
+                os._exit(0)
+
+    def cancel_restart(e):
+        restart_dialog.open = False
+        page.update()
+
+    restart_dialog = ft.AlertDialog(
+        modal=True,
+        title=ft.Row([ft.Icon(ft.Icons.RESTART_ALT_ROUNDED, color=ft.Colors.PRIMARY), ft.Text("Restart E-stream'o")]),
+        content=ft.Text(
+            "Are you sure you want to restart the E-stream'o application to refresh all active connections and clear the session cache?"
+        ),
+        actions=[
+            ft.TextButton("Cancel", on_click=cancel_restart),
+            ft.ElevatedButton("Restart", bgcolor=ft.Colors.PRIMARY, color="black", on_click=perform_restart),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+
+    def confirm_restart(e):
+        if restart_dialog not in page.overlay:
+            page.overlay.append(restart_dialog)
+        restart_dialog.open = True
+        page.update()
+
+    restart_wrap.on_click = confirm_restart
+
     # ── 2D Keyboard Focus Grid ───────────────────────────────────────────────
     # Row 0: [edit_name_btn]
     # Row 1: color swatches
     # Row 2: [edit_folder_btn, browse_wrap, phone_wrap]
-    # Row 3: [save_wrap, disconnect_wrap]
+    # Row 3: [save_wrap, restart_wrap, disconnect_wrap]
     grid = [
         [edit_name_btn],
         color_row.controls,
         [edit_folder_btn, browse_wrap, phone_wrap],
-        [save_wrap, disconnect_wrap],
+        [save_wrap, restart_wrap, disconnect_wrap],
     ]
     focus_state = {"r": 0, "c": 0}
 
@@ -768,6 +891,7 @@ def settings_view(page: ft.Page) -> ft.View:
         id(browse_wrap): browse_focus,
         id(phone_wrap): phone_focus,
         id(save_wrap): save_focus,
+        id(restart_wrap): restart_focus,
         id(disconnect_wrap): disconnect_focus,
     }
 
@@ -836,10 +960,11 @@ def settings_view(page: ft.Page) -> ft.View:
 
     async def settings_keyboard(e: ft.KeyboardEvent):
         # Dialogs consume all keys
-        if drive_dialog.open or disconnect_dialog.open or getattr(name_modal, "open", False) or getattr(folder_modal, "open", False):
+        if drive_dialog.open or disconnect_dialog.open or restart_dialog.open or getattr(name_modal, "open", False) or getattr(folder_modal, "open", False):
             if e.key in ["Escape", "BrowserBack", "Backspace"]:
                 drive_dialog.open = False
                 disconnect_dialog.open = False
+                restart_dialog.open = False
                 name_modal.open = False
                 folder_modal.open = False
                 page.update()
@@ -958,7 +1083,7 @@ def settings_view(page: ft.Page) -> ft.View:
             # ── Action Buttons ──
             ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                controls=[save_wrap, disconnect_wrap],
+                controls=[save_wrap, restart_wrap, disconnect_wrap],
             ),
             ft.Container(height=100), # Spacer to ensure full visibility at bottom
             dummy_focus
