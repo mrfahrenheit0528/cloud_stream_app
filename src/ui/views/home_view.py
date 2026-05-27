@@ -352,13 +352,13 @@ def home_view(page: ft.Page) -> ft.View:
         import uuid
         row_key = f"shelf_{uuid.uuid4()}"
         
-        # Dynamic category check: Songs require background caching which is heavy, so we keep a 25-item cap.
-        # Pure photos or pure videos require no heavy pre-fetching and can safely load up to 150 items.
+        # Dynamic category check: Songs require background caching which is heavy, so we keep a 15-item cap.
+        # Pure photos or pure videos require no heavy pre-fetching and can safely load up to 30 items.
         is_pure_video = all(item.get("mimeType", "").startswith("video/") for item in items_list) if items_list else False
         is_pure_photo = all(item.get("mimeType", "").startswith("image/") for item in items_list) if items_list else False
         
         if is_pure_video or is_pure_photo:
-            capped_items = items_list[:50]
+            capped_items = items_list[:30]
         else:
             capped_items = items_list[:15]
         

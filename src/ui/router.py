@@ -136,8 +136,17 @@ class AppRouter:
             if self.page.route == "/":
                 self._cached_home_view = None  # Clear cache on logout so fresh data loads after re-login
                 self.page.views.append(login_view(self.page))
+            elif self.page.route.startswith("/viewer/"):
+                # OPTIMIZATION: If entering the video player viewer, completely destroy
+                # the home view cache and de-allocate its heavy thumbnail/image memory.
+                self._cached_home_view = None
+                
+                # Extract the unique file ID from the URL string and load viewer alone
+                url_parts = self.page.route.split("/")
+                file_id = url_parts[-1]
+                self.page.views.append(viewer_view(self.page, file_id))
             else:
-                # If not on login screen, the Home screen is always the base layer.
+                # If not on login screen and not viewing media, the Home screen is the base layer.
                 # We CACHE the home view so that navigating to /settings and back
                 # does NOT rebuild the home view, which would re-schedule the background
                 # data-fetch task and cause the "reload" visual glitch.
@@ -155,16 +164,9 @@ class AppRouter:
                     h_view.controls[0].disabled = False
                 self.page.views.append(h_view)
 
-            # 2. View Stacking (Overlays)
-            # We push these views ON TOP of the home view so the back button works naturally
-            if self.page.route == "/settings":
-                self.page.views.append(settings_view(self.page))
-
-            elif self.page.route.startswith("/viewer/"):
-                # Extract the unique file ID from the URL string
-                url_parts = self.page.route.split("/")
-                file_id = url_parts[-1]
-                self.page.views.append(viewer_view(self.page, file_id))
+                # 2. View Stacking (Overlays)
+                if self.page.route == "/settings":
+                    self.page.views.append(settings_view(self.page))
 
             # Re-register the keyboard handler for the current route.
             # Because the home view is cached (not rebuilt), we store its handler separately
@@ -199,12 +201,20 @@ class AppRouter:
             try: self.page.window.full_screen = False
             except: pass
             
-        self.page.views.pop()
-        top_view = self.page.views[-1]
-        
-        if top_view.route == "/home":
-            audio_state = self.page.session.store.get("audio_state")
-            if audio_state:
-                self.page.run_task(audio_state.stop_audio)
-                    
-        await self.page.push_route(top_view.route)
+        if self.page.route.startswith("/viewer/"):
+            # If backing out of the viewer, cleanly navigate back to home
+            self.page.go("/home")
+            return
+            
+        if len(self.page.views) > 1:
+            self.page.views.pop()
+            top_view = self.page.views[-1]
+            
+            if top_view.route == "/home":
+                audio_state = self.page.session.store.get("audio_state")
+                if audio_state:
+                    self.page.run_task(audio_state.stop_audio)
+                        
+            await self.page.push_route(top_view.route)
+        else:
+            self.page.go("/home")
