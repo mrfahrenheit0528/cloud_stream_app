@@ -536,14 +536,17 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         
         def rebuild_queue():
             nonlocal video_queue, current_queue_idx
-            other_vids = [v for v in video_list if v["id"] != item_data["id"]]
-            video_queue = [item_data] + other_vids
+            video_queue = list(video_list)
             current_queue_idx = 0
+            for idx, vid in enumerate(video_queue):
+                if vid["id"] == item_data["id"]:
+                    current_queue_idx = idx
+                    break
             
         rebuild_queue()
         
-        played_indices = {0}
-        play_history = [0]
+        played_indices = {current_queue_idx}
+        play_history = [current_queue_idx]
 
         # Centered premium overlay video title
         video_title_text = ft.Text(
@@ -604,7 +607,7 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         video_engine = fv.Video(
             key=f"video_player_{item_data['id']}",
             playlist=full_playlist,
-            autoplay=not has_saved_pos,
+            autoplay=False,  # Manually managed at startup to preserve sequential playlist indexing
             expand=True,
             show_controls=False,
             configuration=video_config,
@@ -620,6 +623,8 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             (our jump_to call, mpv's internal key bindings, playlist auto-advance, etc.).
             Keeps Python state in sync with the native player."""
             nonlocal current_queue_idx
+            if not player_initialized[0]:
+                return
             is_skipping[0] = True
             track_playing_started[0] = False
             try:
@@ -708,6 +713,7 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         is_transitioning = [False]
         is_skipping = [False]
         track_playing_started = [False]
+        player_initialized = [False]
 
         async def on_next_video(e=None):
             if is_transitioning[0]:
@@ -1408,6 +1414,27 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                     break
                     
         page.run_task(video_idle_loop)
+        
+        async def start_playback():
+            try:
+                # Settle for 150ms before loading the selected track to prevent native canvas conflicts
+                await asyncio.sleep(0.15)
+                
+                if current_queue_idx > 0:
+                    player_initialized[0] = True
+                    res = video_engine.jump_to(current_queue_idx)
+                    if asyncio.iscoroutine(res): await res
+                else:
+                    player_initialized[0] = True
+                
+                if not has_saved_pos:
+                    res = video_engine.play()
+                    if asyncio.iscoroutine(res): await res
+            except Exception as ex:
+                print(f"[start_playback] error: {ex}")
+                player_initialized[0] = True
+                
+        page.run_task(start_playback)
         
         player = ft.Stack([
             video_container,
