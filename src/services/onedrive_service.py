@@ -5,6 +5,7 @@ import json
 import asyncio
 import base64
 import http.cookiejar
+import os
 
 # Module-level caches for SharePoint business sharing links
 _sharepoint_openers = {}  # domain -> opener with its CookieJar
@@ -259,6 +260,21 @@ async def get_media(token: str, folder_id: str, include_subfolders: bool = True)
             
         raw_items = data.get("value", [])
         
+        # 1. Identify all subtitle files in the folder first
+        subtitle_candidates = []
+        for item in raw_items:
+            if "folder" in item:
+                continue
+            name = item["name"]
+            name_lower = name.lower()
+            if name_lower.endswith((".srt", ".vtt", ".ass")):
+                download_url = item.get("@microsoft.graph.downloadUrl") or item.get("@content.downloadUrl") or ""
+                subtitle_candidates.append({
+                    "id": item["id"],
+                    "name": name,
+                    "url": download_url
+                })
+        
         files = []
         for item in raw_items:
             # Skip folders
@@ -322,6 +338,13 @@ async def get_media(token: str, folder_id: str, include_subfolders: bool = True)
             if not thumbnail_url and is_image:
                 thumbnail_url = download_url
                 
+            # Pair matching subtitles for video files
+            item_subtitles = []
+            if is_video:
+                for sub in subtitle_candidates:
+                    if is_subtitle_for_video(sub["name"], item["name"]):
+                        item_subtitles.append(sub)
+                
             files.append({
                 "id": item["id"],
                 "name": item["name"],
@@ -331,6 +354,7 @@ async def get_media(token: str, folder_id: str, include_subfolders: bool = True)
                 "hasThumbnail": bool(thumbnail_url),
                 "iconLink": "",
                 "audio": item.get("audio") or {},
+                "subtitles": item_subtitles,
             })
             
         return {
@@ -350,3 +374,77 @@ def get_direct_stream_url_sync(url: str) -> str:
 async def get_direct_stream_url(url: str) -> str:
     """Modern media engines follow redirects natively, so we return the direct stream link immediately."""
     return url
+
+def is_subtitle_for_video(sub_name: str, video_name: str) -> bool:
+    """Checks if a subtitle filename matches a video filename based on common naming conventions."""
+    sub_name_lower = sub_name.lower()
+    video_name_lower = video_name.lower()
+    
+    # Extract extensions
+    video_base, _ = os.path.splitext(video_name_lower)
+    sub_base, sub_ext = os.path.splitext(sub_name_lower)
+    
+    if sub_ext not in (".srt", ".vtt", ".ass"):
+        return False
+        
+    # Case 1: Exact match of bases (e.g., movie.srt vs movie.mp4)
+    if sub_base == video_base:
+        return True
+        
+    # Case 2: Language code suffix (e.g., movie.en.srt vs movie.mp4)
+    if sub_base.startswith(video_base + "."):
+        return True
+        
+    # Case 3: Double extension (e.g., movie.mp4.srt vs movie.mp4)
+    if sub_name_lower == video_name_lower + sub_ext:
+        return True
+        
+    return False
+
+async def download_file_as_text(stream_url: str) -> str:
+    """Downloads a text file (like .srt/.vtt) from OneDrive/SharePoint and returns its content as a string."""
+    if not stream_url:
+        return ""
+        
+    resolved_url = get_direct_stream_url_sync(stream_url)
+    
+    parsed = urllib.parse.urlparse(resolved_url)
+    domain = parsed.netloc
+    is_sp = ".sharepoint.com" in domain.lower()
+    
+    def fetch():
+        if is_sp:
+            opener = get_sharepoint_opener(domain)
+            req = urllib.request.Request(resolved_url)
+            try:
+                with opener.open(req, timeout=10) as response:
+                    content_bytes = response.read()
+                    try:
+                        return content_bytes.decode('utf-8-sig')
+                    except UnicodeDecodeError:
+                        try:
+                            return content_bytes.decode('utf-16')
+                        except UnicodeDecodeError:
+                            return content_bytes.decode('latin-1', errors='replace')
+            except Exception as e:
+                print(f"Error downloading SharePoint file as text: {e}")
+                return ""
+        else:
+            req = urllib.request.Request(resolved_url)
+            req.add_header('User-Agent', 'Mozilla/5.0')
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    content_bytes = response.read()
+                    try:
+                        return content_bytes.decode('utf-8-sig')
+                    except UnicodeDecodeError:
+                        try:
+                            return content_bytes.decode('utf-16')
+                        except UnicodeDecodeError:
+                            return content_bytes.decode('latin-1', errors='replace')
+            except Exception as e:
+                print(f"Error downloading OneDrive file as text: {e}")
+                return ""
+                
+    return await asyncio.to_thread(fetch)
+
