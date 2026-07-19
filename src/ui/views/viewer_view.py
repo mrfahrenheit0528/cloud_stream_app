@@ -547,42 +547,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             current_queue_idx = 0
             
         rebuild_queue()
-
-        async def load_subtitle_for_track(track_data):
-            try:
-                subs = track_data.get("subtitles")
-                if not subs:
-                    video_engine.subtitle_track = None
-                    try: video_engine.update()
-                    except: pass
-                    return
-                
-                # Fetch first matching subtitle track
-                sub_info = subs[0]
-                sub_url = sub_info.get("url")
-                if not sub_url:
-                    video_engine.subtitle_track = None
-                    try: video_engine.update()
-                    except: pass
-                    return
-                
-                print(f"[Subtitles] Loading external subtitle file: {sub_info['name']}")
-                from services.onedrive_service import download_file_as_text
-                srt_text = await download_file_as_text(sub_url)
-                if srt_text:
-                    video_engine.subtitle_track = fv.VideoSubtitleTrack(
-                        src=srt_text, 
-                        title=sub_info.get("name", "Subtitles")
-                    )
-                    try: video_engine.update()
-                    except: pass
-                    print(f"[Subtitles] Subtitles successfully loaded: {sub_info['name']}")
-                else:
-                    video_engine.subtitle_track = None
-                    try: video_engine.update()
-                    except: pass
-            except Exception as ex:
-                print(f"[Subtitles] Error loading subtitles: {ex}")
         
         played_indices = {0}
         play_history = [0]
@@ -657,9 +621,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
         # Dedicated layout wrapper (no more widget unmounting — it kills the WebSocket)
         video_container = ft.Container(content=video_engine, expand=True)
 
-        # Kick off initial subtitle load in background task
-        page.run_task(load_subtitle_for_track, item_data)
-
         async def on_track_changed(e=None):
             """Fires when flet_video/mpv changes the active playlist item via ANY means
             (our jump_to call, mpv's internal key bindings, playlist auto-advance, etc.).
@@ -687,8 +648,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
                     try:
                         page.session.store.set("current_media", target_vid)
                     except Exception: pass
-                    # Load subtitle for new track
-                    page.run_task(load_subtitle_for_track, target_vid)
                     # Sync video title in real-time
                     try:
                         video_title_text.value = target_vid.get("name", "")
@@ -737,8 +696,6 @@ def viewer_view(page: ft.Page, file_name: str) -> ft.View:
             try:
                 page.session.store.set("current_media", target_vid)
             except Exception: pass
-
-            page.run_task(load_subtitle_for_track, target_vid)
 
             is_playing[0] = True
             try:
